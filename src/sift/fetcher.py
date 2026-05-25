@@ -225,6 +225,7 @@ async def _run(urls: list[str], opts: FetchOptions) -> FetchOutcome:
     crawler_run_config = CrawlerRunConfig(
         markdown_generator=md_gen,
         cache_mode=CacheMode.WRITE_ONLY,
+        verbose=False,
     )
 
     crawl_logger = AsyncLogger(
