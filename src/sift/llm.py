@@ -27,7 +27,11 @@ def _truncate(content: str, max_bytes: int = DEFAULT_MAX_CONTENT_SIZE) -> tuple[
 def _client(cfg: LLMConfig):
     import openai
 
-    return openai.AsyncOpenAI(base_url=cfg.host, api_key=cfg.api_key or "-")
+    return openai.AsyncOpenAI(
+        base_url=cfg.host,
+        api_key=cfg.api_key or "-",
+        timeout=cfg.timeout,
+    )
 
 
 def _classify(exc: BaseException, kind: str) -> str:

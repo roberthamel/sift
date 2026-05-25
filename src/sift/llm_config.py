@@ -20,7 +20,7 @@ class LLMConfig:
     api_key: str | None
     model: str | None
     vlm: bool = False
-    timeout: float = 60.0
+    timeout: float = 3600.0  # 1 hour — local LLMs on slow hardware can take a while
 
     def for_llm(self) -> "LLMConfig":
         missing = []
@@ -78,5 +78,5 @@ def resolve(
         api_key=api_key or os.environ.get("SIFT_LLM_APIKEY"),
         model=model or os.environ.get("SIFT_LLM_MODEL"),
         vlm=vlm or _envflag("SIFT_VLM"),
-        timeout=timeout if timeout is not None else _envfloat("SIFT_LLM_TIMEOUT", 60.0),
+        timeout=timeout if timeout is not None else _envfloat("SIFT_LLM_TIMEOUT", 3600.0),
     )
