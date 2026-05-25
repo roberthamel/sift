@@ -360,6 +360,216 @@ def describe(
         sys.stdout.write("\n")
 
 
+@app.command()
+def research(
+    query: str = typer.Argument(..., help="Research question"),
+    mode: str = typer.Option("balanced", "--mode", help="speed | balanced | quality"),
+    llm_host: str | None = typer.Option(None, "--llm-host", envvar="SIFT_LLM_HOST"),
+    llm_apikey: str | None = typer.Option(None, "--llm-apikey", envvar="SIFT_LLM_APIKEY"),
+    llm_model: str | None = typer.Option(None, "--llm-model", envvar="SIFT_LLM_MODEL"),
+    embed_base_url: str | None = typer.Option(None, "--embed-base-url", envvar="SIFT_EMBED_BASE_URL"),
+    embed_api_key: str | None = typer.Option(None, "--embed-api-key", envvar="SIFT_EMBED_API_KEY"),
+    embed_model: str | None = typer.Option(None, "--embed-model", envvar="SIFT_EMBED_MODEL"),
+    system: str | None = typer.Option(None, "--system", help="System instructions injected into the writer prompt"),
+    history_file: Path | None = typer.Option(None, "--history-file", help="JSON file shaped as [[role, text], ...]"),
+    stream: bool = typer.Option(False, "--stream", help="Emit NDJSON events to stdout"),
+    tui: bool = typer.Option(False, "--tui", help="Rich Live TUI + follow-up REPL"),
+    lang: str = typer.Option("all", "--lang"),
+    safesearch: int = typer.Option(0, "--safesearch", min=0, max=2),
+    allow: list[str] = typer.Option(None, "--allow"),
+    block: list[str] = typer.Option(None, "--block"),
+    log_file: Path | None = typer.Option(None, "--log-file"),
+    verbose: bool = typer.Option(False, "--verbose"),
+    settings: Path | None = typer.Option(None, "--settings"),
+) -> None:
+    """Vane-style research loop: plan → search → synthesize."""
+    import asyncio
+
+    from . import bootstrap as _bootstrap
+
+    _bootstrap.bootstrap(settings_path=settings, log_file=log_file, verbose=verbose)
+
+    from . import llm_config
+    from .research import embed_config as _embed_config
+    from .research import loop as _loop
+    from .research import writer as _writer
+    from .research.events import Event, EventBus, EventType
+
+    llm_cfg = llm_config.resolve(host=llm_host, api_key=llm_apikey, model=llm_model)
+    embed_cfg = _embed_config.resolve(
+        host=embed_base_url, api_key=embed_api_key, model=embed_model
+    )
+    try:
+        llm_cfg.for_llm()
+        embed_cfg.for_embed()
+    except llm_config.ConfigError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2)
+
+    if mode not in ("speed", "balanced", "quality"):
+        typer.echo(f"unknown --mode: {mode}", err=True)
+        raise typer.Exit(code=2)
+
+    history: list[tuple[str, str]] = []
+    if history_file is not None:
+        try:
+            raw = json.loads(history_file.read_text())
+            for entry in raw or []:
+                role, text = entry[0], entry[1]
+                history.append((str(role), str(text)))
+        except Exception as exc:  # noqa: BLE001
+            typer.echo(f"--history-file invalid: {exc}", err=True)
+            raise typer.Exit(code=2)
+
+    runner_kwargs = {
+        "lang": lang,
+        "safesearch": safesearch,
+        "allow": list(allow or []) or None,
+        "block": list(block or []) or None,
+    }
+
+    if tui:
+        _run_tui(
+            query=query, history=history, system=system, mode=mode,
+            llm_cfg=llm_cfg, embed_cfg=embed_cfg, runner_kwargs=runner_kwargs,
+        )
+        return
+
+    if stream:
+        exit_code = asyncio.run(
+            _run_stream(
+                query=query, history=history, system=system, mode=mode,
+                llm_cfg=llm_cfg, embed_cfg=embed_cfg, runner_kwargs=runner_kwargs,
+            )
+        )
+        raise typer.Exit(code=exit_code)
+
+    exit_code = asyncio.run(
+        _run_json(
+            query=query, history=history, system=system, mode=mode,
+            llm_cfg=llm_cfg, embed_cfg=embed_cfg, runner_kwargs=runner_kwargs,
+        )
+    )
+    raise typer.Exit(code=exit_code)
+
+
+async def _run_json(*, query, history, system, mode, llm_cfg, embed_cfg, runner_kwargs):
+    import asyncio
+    from .research import loop as _loop
+    from .research import writer as _writer
+    from .research.events import EventBus, EventType
+
+    bus = EventBus()
+    errors: list[dict] = []
+    actions_log: list[dict] = []
+
+    async def collector():
+        async for ev in bus.iterate():
+            if ev.type == EventType.ERROR:
+                errors.append(ev.data)
+            elif ev.type in (
+                EventType.PLAN, EventType.SEARCH, EventType.SEARCH_RESULTS,
+                EventType.READING, EventType.EXTRACTED, EventType.DONE,
+            ):
+                actions_log.append({"type": ev.type.value, "data": ev.data})
+
+    collect_task = asyncio.create_task(collector())
+
+    result = await _loop.run(
+        query=query, history=history, system=system, mode=mode,
+        llm_cfg=llm_cfg, embed_cfg=embed_cfg, bus=bus, runner_kwargs=runner_kwargs,
+    )
+    synthesis = await _writer.write(
+        query=query, history=history, system=system,
+        sources=result.sources, mode=mode, llm_cfg=llm_cfg, bus=bus,
+    )
+    bus.close()
+    await collect_task
+
+    out = {
+        "query": query,
+        "mode": mode,
+        "actions": actions_log,
+        "sources": result.sources,
+        "synthesis": synthesis,
+        "usage": result.usage,
+        "errors": errors,
+    }
+    sys.stdout.write(json.dumps(out, ensure_ascii=False, default=str))
+    sys.stdout.write("\n")
+    return 0 if synthesis else 1
+
+
+async def _run_stream(*, query, history, system, mode, llm_cfg, embed_cfg, runner_kwargs):
+    import asyncio as _asyncio
+    from .research import loop as _loop
+    from .research import writer as _writer
+    from .research.events import EventBus, EventType
+
+    bus = EventBus()
+    saw_response = False
+
+    async def streamer():
+        nonlocal saw_response
+        async for ev in bus.iterate():
+            if ev.type == EventType.RESPONSE:
+                saw_response = True
+            sys.stdout.write(json.dumps({"type": ev.type.value, "data": ev.data}, ensure_ascii=False, default=str))
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+
+    stream_task = _asyncio.create_task(streamer())
+    result = await _loop.run(
+        query=query, history=history, system=system, mode=mode,
+        llm_cfg=llm_cfg, embed_cfg=embed_cfg, bus=bus, runner_kwargs=runner_kwargs,
+    )
+    await _writer.write(
+        query=query, history=history, system=system,
+        sources=result.sources, mode=mode, llm_cfg=llm_cfg, bus=bus,
+    )
+    bus.close()
+    await stream_task
+    return 0 if saw_response else 1
+
+
+def _run_tui(*, query, history, system, mode, llm_cfg, embed_cfg, runner_kwargs):
+    import asyncio as _asyncio
+    from .research import loop as _loop
+    from .research import writer as _writer
+    from .research import tui as _tui
+    from .research.events import EventBus
+
+    session_history = list(history)
+
+    async def one_turn(q: str, hist: list[tuple[str, str]]) -> str:
+        bus = EventBus()
+
+        async def producer():
+            result = await _loop.run(
+                query=q, history=hist, system=system, mode=mode,
+                llm_cfg=llm_cfg, embed_cfg=embed_cfg, bus=bus, runner_kwargs=runner_kwargs,
+            )
+            await _writer.write(
+                query=q, history=hist, system=system,
+                sources=result.sources, mode=mode, llm_cfg=llm_cfg, bus=bus,
+            )
+            bus.close()
+
+        prod = _asyncio.create_task(producer())
+        synthesis = await _tui.render_run(bus)
+        await prod
+        return synthesis
+
+    answer = _asyncio.run(one_turn(query, session_history))
+
+    def _run_one(q: str, hist: list[tuple[str, str]]):
+        return one_turn(q, hist)
+
+    session_history.append(("human", query))
+    session_history.append(("assistant", answer))
+    _tui.followup_loop(_run_one, session_history)
+
+
 def _run_fetch_into_search(
     *,
     search_dict: dict,
