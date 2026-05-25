@@ -1,0 +1,63 @@
+[project]
+name = "sift"
+version = "0.1.0"
+description = "Typer CLI that runs SearXNG search and crawl4ai page-fetch in-process; prints LLM-friendly JSON."
+readme = "README.md"
+authors = [
+    { name = "Robert Hamel", email = "roberthamel@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "typer>=0.12",
+    "pyyaml>=6.0",
+    "flask>=3.0",
+    "searxng",
+    "crawl4ai",
+]
+
+[project.scripts]
+sift = "sift.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.11.3,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.uv]
+# crawl4ai pins lxml~=5.3 but searxng pins lxml==6.1.1.
+# Both projects use only stable lxml APIs (html/etree/cssselect),
+# so we force the searxng-required version across the workspace.
+override-dependencies = ["lxml==6.1.1"]
+
+[tool.uv.sources]
+searxng = { path = "../searxng", editable = true }
+crawl4ai = { path = "../crawl4ai", editable = true }
+
+[tool.uv.extra-build-dependencies]
+searxng = [
+    "msgspec",
+    "pyyaml",
+    "typing_extensions",
+    "babel",
+    "flask",
+    "flask-babel",
+    "jinja2",
+    "lxml",
+    "pygments",
+    "python-dateutil",
+    "httpx[http2]",
+    "httpx-socks[asyncio]",
+    "valkey",
+    "markdown-it-py",
+    "typer",
+    "isodate",
+    "whitenoise",
+    "certifi",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.uv_build]
+module-name = "sift"
