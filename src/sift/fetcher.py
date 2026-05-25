@@ -34,6 +34,9 @@ class FetchOptions:
     llm_api_key: str | None = None
     llm_base_url: str | None = None
     llm_temperature: float | None = None
+    # Post-extraction LLM pass (independent of `--filter llm`).
+    prompt: str | None = None
+    llm_config: "object | None" = None  # sift.llm_config.LLMConfig
 
 
 @dataclass
@@ -41,6 +44,8 @@ class FetchedResult:
     url: str
     markdown: str | None
     filter: FilterName
+    processed_markdown: str | None = None
+    llm_error: str | None = None
 
 
 @dataclass
@@ -142,6 +147,8 @@ async def _fetch_one(
     filter_name: FilterName,
     timeout: float,
     sem: asyncio.Semaphore,
+    prompt: str | None = None,
+    llm_config=None,
 ) -> FetchedResult | FetchError:
     async with sem:
         try:
@@ -171,7 +178,17 @@ async def _fetch_one(
             url=url, error_type="filter_failed", message=str(exc) or "no markdown"
         )
 
-    return FetchedResult(url=url, markdown=text or None, filter=filter_name)
+    result = FetchedResult(url=url, markdown=text or None, filter=filter_name)
+
+    if prompt and llm_config is not None and result.markdown:
+        from . import llm as _llm
+
+        processed, err = await _llm.process_page_content(
+            result.markdown, llm_config, prompt
+        )
+        result.processed_markdown = processed
+        result.llm_error = err
+    return result
 
 
 async def _run(urls: list[str], opts: FetchOptions) -> FetchOutcome:
@@ -222,7 +239,10 @@ async def _run(urls: list[str], opts: FetchOptions) -> FetchOutcome:
 
     async with AsyncWebCrawler(config=browser_cfg, logger=crawl_logger) as crawler:
         tasks = [
-            _fetch_one(crawler, crawler_run_config, u, opts.filter, opts.timeout, sem)
+            _fetch_one(
+                crawler, crawler_run_config, u, opts.filter, opts.timeout, sem,
+                prompt=opts.prompt, llm_config=opts.llm_config,
+            )
             for u in queued
         ]
         finished = await asyncio.gather(*tasks)

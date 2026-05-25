@@ -123,7 +123,7 @@ always added when `--fetch` is set.
 | `--log-file PATH` | `$XDG_STATE_HOME/sift/sift.log` | rotated, 1 MB × 3 |
 | `--verbose` | off | raises file log level to DEBUG |
 
-A **hard cap of 50 URLs per invocation** is enforced. Exceeding it exits
+A **hard cap of 100 URLs per invocation** is enforced. Exceeding it exits
 non-zero with a usage error — crawl4ai is not imported in that case.
 
 ### `fetch` JSON output schema
@@ -163,6 +163,131 @@ appear in `fetch_errors[]`.
 ```sh
 SEARXNG_CLI_LIVE_CRAWL=1 uv run pytest -k live
 ```
+
+## LLM features
+
+sift is the successor to [`websearch-mcp`](https://github.com/<user>/websearch-mcp):
+the same OpenAI-compatible LLM/VLM features, exposed as composable CLI stages
+instead of MCP tools. There is no config file — every LLM-touching command
+takes the same flag bundle (with `SIFT_LLM_*` env vars as fallbacks):
+
+| Flag | Env var | Notes |
+| --- | --- | --- |
+| `--llm-host URL` | `SIFT_LLM_HOST` | OpenAI-compatible base URL, e.g. `http://localhost:11434/v1` |
+| `--llm-apikey KEY` | `SIFT_LLM_APIKEY` | use `-` for local endpoints that don't authenticate |
+| `--llm-model NAME` | `SIFT_LLM_MODEL` | model identifier the endpoint exposes |
+| `--vlm` | `SIFT_VLM=1` | per-invocation assertion that the configured model has vision; required by `describe` |
+
+LLM failures are **soft** for `search --summary` and `sift synthesize`: the
+search/fetch payload is still emitted, with `summary: null` and a
+`llm_error` string. Exit code is `0`. `sift describe` likewise exits `0` on
+LLM failure with `success: false`. Hard exit code `2` is reserved for
+missing/invalid LLM config.
+
+### `synthesize` — cited summary from piped sources
+
+```sh
+sift search "linux kernel scheduler" --fetch --fetch-top 5 \
+  | sift synthesize "explain the CFS scheduler"
+```
+
+Reads search-JSON **or** fetch-JSON on stdin. When only `content` (snippet)
+is present, the output carries `snippet_only: true` so callers can see the
+model was working from synopses.
+
+```jsonc
+{
+  "query": "explain the CFS scheduler",
+  "summary": "The CFS scheduler ... [1] ... [2] ...",
+  "source_count": 5,
+  "snippet_only": false,
+  "model": "llama3:8b"
+}
+```
+
+### `search --summary` — one-shot search → fetch → synthesize
+
+```sh
+sift search "what is HTTP/3" --summary
+```
+
+Chains the same pipeline in a single invocation. Same LLM flags as above.
+
+### `search --allow / --block` — domain filters
+
+Repeatable. Suffix-match against the URL host (so `wikipedia.org` matches
+`en.wikipedia.org` but **not** `notwikipedia.org`):
+
+```sh
+sift search "python releases" --allow python.org --allow wikipedia.org
+sift search "open source" --block reddit.com --block twitter.com
+```
+
+`--allow` is applied first (inclusion); `--block` then excludes from the
+result.
+
+### `fetch --prompt` — per-page LLM pass
+
+After crawl4ai produces page markdown, run an additional LLM pass over each
+result. Raw `markdown` is preserved; the LLM's output is attached as
+`processed_markdown`:
+
+```sh
+sift fetch https://example.com/article --prompt "extract author, date, key claims"
+```
+
+This is **independent** of `--filter llm`: the filter shapes what
+crawl4ai extracts; `--prompt` runs after extraction on whatever markdown
+came out.
+
+### `describe` — image description via VLM
+
+```sh
+sift describe ./photo.jpg --vlm
+sift describe "data:image/png;base64,..." --vlm
+sift describe "https://example.com/img.png" --vlm
+sift describe "<base64 string>" --vlm
+```
+
+Accepts a file path, http(s) URL, data URL, or raw base64. Format validation
+is via magic bytes (PNG, JPEG, GIF, WebP). A 10 MB default cap is enforced
+(`--max-bytes`).
+
+```jsonc
+{
+  "source": "./photo.jpg",
+  "mime": "image/jpeg",
+  "bytes": 124513,
+  "success": true,
+  "description": "A close-up of a red bicycle...",
+  "model": "qwen2.5vl:7b"
+}
+```
+
+### Cache
+
+sift maintains an on-disk cache at `$XDG_CACHE_HOME/sift/`. `search`
+responses are cached by default; pass `--no-cache` to bypass, `--cache-ttl 0`
+to keep entries forever, or use the `cache` subcommand:
+
+```sh
+sift cache stats          # { "root": "...", "entries": 12, "bytes": 48213 }
+sift cache clear          # { "removed": 12 }
+```
+
+## Migration from `websearch-mcp`
+
+The MCP server is deprecated. The mapping is:
+
+| websearch-mcp tool | sift equivalent |
+| --- | --- |
+| `web_search` | `sift search` (plus `--summary`, `--allow`, `--block`) |
+| `webfetch` | `sift fetch` (plus `--prompt`) |
+| `synthesize_search_results` | `sift synthesize` |
+| `image_description` | `sift describe --vlm` |
+
+Once you've cut over, **archive the `websearch-mcp` repo** on GitHub — this
+step is manual.
 
 ## Exit codes
 

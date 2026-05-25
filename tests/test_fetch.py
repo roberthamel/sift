@@ -171,7 +171,7 @@ def test_cli_fetch_stdin_search_json_passthrough(patch_crawler):
 
 
 def test_cli_fetch_hard_cap(patch_crawler):
-    urls = [f"https://h{n}.example" for n in range(51)]
+    urls = [f"https://h{n}.example" for n in range(101)]
     r = CliRunner().invoke(app, ["fetch", *urls])
     assert r.exit_code == 2
     assert "hard cap" in (r.stderr or r.stdout)

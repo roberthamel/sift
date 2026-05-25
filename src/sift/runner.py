@@ -73,3 +73,41 @@ def run_search(
         engines_used=[ref.name for ref in engineref_list],
         elapsed=elapsed,
     )
+
+
+def _host_of(url: str) -> str:
+    from urllib.parse import urlsplit
+
+    try:
+        return (urlsplit(url).hostname or "").lower()
+    except Exception:
+        return ""
+
+
+def _matches_suffix(host: str, suffix: str) -> bool:
+    """Suffix match: `wikipedia.org` matches `en.wikipedia.org` and itself,
+    but not `notwikipedia.org`."""
+    s = suffix.lower().lstrip(".")
+    if not s:
+        return False
+    return host == s or host.endswith("." + s)
+
+
+def apply_domain_filters(
+    results: list[dict],
+    allow: list[str] | None,
+    block: list[str] | None,
+) -> list[dict]:
+    """Filter result dicts by URL host suffix. allow wins by inclusion;
+    block excludes after allow. Both are case-insensitive."""
+    out = []
+    allow = [a for a in (allow or []) if a]
+    block = [b for b in (block or []) if b]
+    for r in results:
+        host = _host_of(r.get("url", ""))
+        if allow and not any(_matches_suffix(host, a) for a in allow):
+            continue
+        if block and any(_matches_suffix(host, b) for b in block):
+            continue
+        out.append(r)
+    return out

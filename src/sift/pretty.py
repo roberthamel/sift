@@ -42,6 +42,42 @@ def render(d: dict) -> str:
         for e in errs:
             out.write(f"  - {e['url']}: {e['error_type']} ({e['message']})\n")
 
+    if summary := d.get("summary"):
+        out.write("\nSummary:\n")
+        out.write(summary)
+        out.write("\n")
+    if d.get("llm_error"):
+        out.write(f"\nLLM error: {d['llm_error']}\n")
+
+    return out.getvalue()
+
+
+def render_synthesize(d: dict) -> str:
+    out = StringIO()
+    out.write(f'Summary for "{d.get("query", "")}" '
+              f'({d.get("source_count", 0)} sources, model={d.get("model", "")})\n')
+    if d.get("snippet_only"):
+        out.write("(synthesizing from snippets only — no fetched content)\n")
+    summary = d.get("summary")
+    if summary:
+        out.write("\n")
+        out.write(summary)
+        out.write("\n")
+    if d.get("llm_error"):
+        out.write(f"\nLLM error: {d['llm_error']}\n")
+    return out.getvalue()
+
+
+def render_describe(d: dict) -> str:
+    out = StringIO()
+    src = d.get("source", "")
+    out.write(f"Describe {src} ({d.get('mime', '')}, {d.get('bytes', 0)} bytes)\n")
+    if d.get("success"):
+        out.write("\n")
+        out.write(d.get("description") or "")
+        out.write("\n")
+    else:
+        out.write(f"\nError: {d.get('error', 'unknown')}\n")
     return out.getvalue()
 
 
@@ -64,6 +100,12 @@ def render_fetch(d: dict) -> str:
             out.write("\n")
         else:
             out.write("(no markdown)\n")
+        if r.get("processed_markdown"):
+            out.write("\nProcessed:\n")
+            out.write(r["processed_markdown"])
+            out.write("\n")
+        if r.get("llm_error"):
+            out.write(f"\nLLM error: {r['llm_error']}\n")
     if errors:
         out.write("\nErrors:\n")
         for e in errors:

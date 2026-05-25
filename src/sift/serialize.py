@@ -85,6 +85,10 @@ def fetched_to_dict(outcome, *, search_json: dict | None = None) -> dict:
         merged["url"] = fr.url
         merged["markdown"] = fr.markdown
         merged["filter"] = fr.filter
+        if fr.processed_markdown is not None:
+            merged["processed_markdown"] = fr.processed_markdown
+        if fr.llm_error:
+            merged["llm_error"] = fr.llm_error
         results.append(merged)
 
     errors = [
@@ -111,6 +115,10 @@ def embed_fetch_into_search(search_dict: dict, outcome) -> dict:
             fr = fetched_by_url[url]
             r["markdown"] = fr.markdown
             r["filter"] = fr.filter
+            if fr.processed_markdown is not None:
+                r["processed_markdown"] = fr.processed_markdown
+            if fr.llm_error:
+                r["llm_error"] = fr.llm_error
         else:
             r.setdefault("markdown", None)
             r.setdefault("filter", None)
