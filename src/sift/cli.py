@@ -320,7 +320,7 @@ def describe(
     from . import llm as _llm
     from . import llm_config, images, pretty as pretty_mod
 
-    cfg = llm_config.resolve(host=llm_host, api_key=llm_apikey, model=llm_model, vlm=vlm)
+    cfg = llm_config.resolve(host=llm_host, api_key=llm_apikey, model=llm_model, vlm=vlm or None)
     try:
         cfg.for_vlm()
     except llm_config.ConfigError as exc:

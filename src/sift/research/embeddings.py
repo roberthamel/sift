@@ -14,16 +14,24 @@ def _client(cfg: EmbedConfig):
     )
 
 
+MAX_BATCH_SIZE = 100
+
+
 async def embed_text(texts: list[str], cfg: EmbedConfig) -> list[list[float]]:
     """Return one embedding vector per input text, preserving order.
 
     Empty input returns an empty list without calling the endpoint.
+    Texts are batched into chunks of at most 100 to stay within
+    embedding server request limits.
     """
     if not texts:
         return []
     client = _client(cfg)
-    resp = await client.embeddings.create(model=cfg.model, input=texts)
-    # OpenAI guarantees data ordering matches input; sort defensively by index
-    # in case a local provider deviates.
-    items = sorted(resp.data, key=lambda d: getattr(d, "index", 0))
-    return [list(item.embedding) for item in items]
+
+    all_embeddings: list[list[float]] = []
+    for i in range(0, len(texts), MAX_BATCH_SIZE):
+        batch = texts[i : i + MAX_BATCH_SIZE]
+        resp = await client.embeddings.create(model=cfg.model, input=batch)
+        items = sorted(resp.data, key=lambda d: getattr(d, "index", 0))
+        all_embeddings.extend(list(item.embedding) for item in items)
+    return all_embeddings

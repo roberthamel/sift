@@ -65,18 +65,17 @@ def resolve(
     host: str | None = None,
     api_key: str | None = None,
     model: str | None = None,
-    vlm: bool = False,
+    vlm: bool | None = None,
     timeout: float | None = None,
 ) -> LLMConfig:
     """Resolve config from flags, falling back to SIFT_LLM_* env vars.
 
-    `vlm=True` from the flag is sticky; the env var only contributes when the
-    flag isn't set.
+    Explicitly passing ``vlm=False`` disables VLM even when the env var is set.
     """
     return LLMConfig(
         host=host or os.environ.get("SIFT_LLM_HOST"),
         api_key=api_key or os.environ.get("SIFT_LLM_APIKEY"),
         model=model or os.environ.get("SIFT_LLM_MODEL"),
-        vlm=vlm or _envflag("SIFT_VLM"),
+        vlm=vlm if vlm is not None else _envflag("SIFT_VLM"),
         timeout=timeout if timeout is not None else _envfloat("SIFT_LLM_TIMEOUT", 3600.0),
     )
