@@ -5,6 +5,16 @@ from io import StringIO
 
 
 def render(d: dict) -> str:
+    # `search --summary --pretty`: humans want the summary, not the haystack.
+    # Soft-failed synthesis (summary missing, llm_error set) falls through to
+    # the full render so the user sees what went wrong.
+    if d.get("summary"):
+        out = StringIO()
+        out.write(d["summary"])
+        if not d["summary"].endswith("\n"):
+            out.write("\n")
+        return out.getvalue()
+
     out = StringIO()
     query = d.get("query", "")
     out.write(f'Results for "{query}" ({d.get("number_of_results", 0)} hits, '
