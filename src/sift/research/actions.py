@@ -205,11 +205,15 @@ async def _quality_search(
     # Gather raw results from each query.
     all_raw: list[dict[str, Any]] = []
     for q in queries:
+        ctx.bus.emit(Event(EventType.SEARCH_QUERY, {"query": q, "status": "running"}))
         try:
             all_raw.extend(await _run_searxng(q, ctx))
         except Exception as exc:  # noqa: BLE001
             log.warning("search failed for %r: %s", q, exc)
+            ctx.bus.emit(Event(EventType.SEARCH_QUERY, {"query": q, "status": "failed", "error": str(exc)}))
             ctx.bus.emit(Event(EventType.ERROR, {"stage": "search", "query": q, "error": str(exc)}))
+            continue
+        ctx.bus.emit(Event(EventType.SEARCH_QUERY, {"query": q, "status": "done"}))
 
     # Compact raw list for the picker.
     candidates = []
@@ -274,8 +278,11 @@ async def _quality_search(
     extracted: list[dict[str, Any]] = []
     for c in chosen:
         url = c.get("url")
+        hostname = _host(url)
+        ctx.bus.emit(Event(EventType.FETCH_URL, {"url": url, "hostname": hostname, "status": "fetching"}))
         fetched = by_url.get(url) if url else None
         if not fetched or not fetched.markdown:
+            ctx.bus.emit(Event(EventType.FETCH_URL, {"url": url, "hostname": hostname, "status": "failed", "error": "no content"}))
             ctx.bus.emit(
                 Event(EventType.ERROR, {"stage": "scrape", "url": url, "error": "no content"})
             )
@@ -317,6 +324,7 @@ async def _quality_search(
         }
         extracted.append(item)
         ctx.bus.emit(Event(EventType.EXTRACTED, {"url": url, "facts": content[:200]}))
+        ctx.bus.emit(Event(EventType.FETCH_URL, {"url": url, "hostname": hostname, "status": "done"}))
     return extracted
 
 
@@ -333,10 +341,14 @@ async def _action_search(args: dict[str, Any], ctx: ActionContext) -> ActionOutp
         # speed / balanced: per-query embed-rank, then merge and re-dedupe.
         combined: list[dict[str, Any]] = []
         for q in queries:
+            ctx.bus.emit(Event(EventType.SEARCH_QUERY, {"query": q, "status": "running"}))
             try:
                 raw = await _run_searxng(q, ctx)
             except Exception as exc:  # noqa: BLE001
                 log.warning("search failed for %r: %s", q, exc)
+                ctx.bus.emit(
+                    Event(EventType.SEARCH_QUERY, {"query": q, "status": "failed", "error": str(exc)})
+                )
                 ctx.bus.emit(
                     Event(EventType.ERROR, {"stage": "search", "query": q, "error": str(exc)})
                 )
@@ -345,6 +357,9 @@ async def _action_search(args: dict[str, Any], ctx: ActionContext) -> ActionOutp
                 ranked = await _embed_and_rank(ctx.query, raw, ctx)
             except Exception as exc:  # noqa: BLE001
                 log.warning("embedding failed for %r: %s", q, exc)
+                ctx.bus.emit(
+                    Event(EventType.SEARCH_QUERY, {"query": q, "status": "failed", "error": str(exc)})
+                )
                 ctx.bus.emit(
                     Event(EventType.ERROR, {"stage": "embed", "query": q, "error": str(exc)})
                 )
@@ -358,6 +373,7 @@ async def _action_search(args: dict[str, Any], ctx: ActionContext) -> ActionOutp
                     }
                     for r in raw[:20]
                 ]
+            ctx.bus.emit(Event(EventType.SEARCH_QUERY, {"query": q, "status": "done", "results": len(ranked)}))
             combined.extend(ranked)
         # Dedupe combined by URL, keep first occurrence (already sorted per-query).
         seen: set[str] = set()
@@ -425,8 +441,10 @@ async def _action_scrape_url(args: dict[str, Any], ctx: ActionContext) -> Action
                 "similarity": 1.0,
             }
         )
+        ctx.bus.emit(Event(EventType.FETCH_URL, {"url": r.url, "hostname": _host(r.url), "status": "done"}))
         ctx.bus.emit(Event(EventType.EXTRACTED, {"url": r.url, "bytes": len(r.markdown or "")}))
     for e in outcome.errors:
+        ctx.bus.emit(Event(EventType.FETCH_URL, {"url": e.url, "hostname": _host(e.url), "status": "failed", "error": e.message}))
         ctx.bus.emit(Event(EventType.ERROR, {"stage": "scrape", "url": e.url, "error": e.message}))
     return ActionOutput(type="search_results", data={"results": results})
 

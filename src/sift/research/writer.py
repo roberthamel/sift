@@ -24,6 +24,18 @@ def _client(cfg: LLMConfig):
     )
 
 
+def format_references(sources: list[dict[str, Any]]) -> str:
+    """Build a '## References' section from a source list."""
+    if not sources:
+        return ""
+    lines = ["\n\n## References\n"]
+    for i, s in enumerate(sources, start=1):
+        title = s.get("title") or s.get("url") or f"Source {i}"
+        url = s.get("url") or ""
+        lines.append(f"{i}. [{title}]({url})")
+    return "\n".join(lines)
+
+
 def _format_context(sources: list[dict[str, Any]]) -> str:
     lines = []
     for i, s in enumerate(sources, start=1):

@@ -139,6 +139,7 @@ async def run(
     finished = False
 
     for i in range(max_iter):
+        bus.emit(Event(EventType.ITER_PROGRESS, {"iter": i + 1, "max_iter": max_iter}))
         sys_prompt = _prompts.get_researcher_prompt(action_desc, mode, i, max_iter)
         if system:
             sys_prompt = sys_prompt + "\n\n### User instructions\n" + system

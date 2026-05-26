@@ -13,10 +13,13 @@ class EventType(str, Enum):
     PLAN = "plan"
     SEARCH = "search"
     SEARCH_RESULTS = "search_results"
+    SEARCH_QUERY = "search_query"
     READING = "reading"
+    FETCH_URL = "fetch_url"
     EXTRACTED = "extracted"
     RESPONSE = "response"
     SOURCES = "sources"
+    ITER_PROGRESS = "iter_progress"
     DONE = "done"
     ERROR = "error"
 

@@ -362,7 +362,7 @@ def describe(
 
 @app.command()
 def research(
-    query: str = typer.Argument(..., help="Research question"),
+    query: str | None = typer.Argument(None, help="Research question (optional with --tui)"),
     mode: str = typer.Option("balanced", "--mode", help="speed | balanced | quality"),
     llm_host: str | None = typer.Option(None, "--llm-host", envvar="SIFT_LLM_HOST"),
     llm_apikey: str | None = typer.Option(None, "--llm-apikey", envvar="SIFT_LLM_APIKEY"),
@@ -374,6 +374,7 @@ def research(
     history_file: Path | None = typer.Option(None, "--history-file", help="JSON file shaped as [[role, text], ...]"),
     stream: bool = typer.Option(False, "--stream", help="Emit NDJSON events to stdout"),
     tui: bool = typer.Option(False, "--tui", help="Rich Live TUI + follow-up REPL"),
+    output: Path | None = typer.Option(None, "--output", "-o", help="Write synthesis to this markdown file"),
     lang: str = typer.Option("all", "--lang"),
     safesearch: int = typer.Option(0, "--safesearch", min=0, max=2),
     allow: list[str] = typer.Option(None, "--allow"),
@@ -410,6 +411,10 @@ def research(
         typer.echo(f"unknown --mode: {mode}", err=True)
         raise typer.Exit(code=2)
 
+    if query is None and not tui:
+        typer.echo("query is required when not using --tui", err=True)
+        raise typer.Exit(code=2)
+
     history: list[tuple[str, str]] = []
     if history_file is not None:
         try:
@@ -429,9 +434,20 @@ def research(
     }
 
     if tui:
+        resolved_query = query
+        if resolved_query is None:
+            try:
+                resolved_query = input("research question: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                raise typer.Exit(code=1)
+            if not resolved_query:
+                typer.echo("no query provided", err=True)
+                raise typer.Exit(code=2)
         _run_tui(
-            query=query, history=history, system=system, mode=mode,
+            query=resolved_query, history=history, system=system, mode=mode,
             llm_cfg=llm_cfg, embed_cfg=embed_cfg, runner_kwargs=runner_kwargs,
+            output=output,
         )
         return
 
@@ -440,6 +456,7 @@ def research(
             _run_stream(
                 query=query, history=history, system=system, mode=mode,
                 llm_cfg=llm_cfg, embed_cfg=embed_cfg, runner_kwargs=runner_kwargs,
+                output=output,
             )
         )
         raise typer.Exit(code=exit_code)
@@ -448,12 +465,13 @@ def research(
         _run_json(
             query=query, history=history, system=system, mode=mode,
             llm_cfg=llm_cfg, embed_cfg=embed_cfg, runner_kwargs=runner_kwargs,
+            output=output,
         )
     )
     raise typer.Exit(code=exit_code)
 
 
-async def _run_json(*, query, history, system, mode, llm_cfg, embed_cfg, runner_kwargs):
+async def _run_json(*, query, history, system, mode, llm_cfg, embed_cfg, runner_kwargs, output=None):
     import asyncio
     from .research import loop as _loop
     from .research import writer as _writer
@@ -486,21 +504,27 @@ async def _run_json(*, query, history, system, mode, llm_cfg, embed_cfg, runner_
     bus.close()
     await collect_task
 
+    synthesis_with_refs = synthesis + _writer.format_references(result.sources)
+
     out = {
         "query": query,
         "mode": mode,
         "actions": actions_log,
         "sources": result.sources,
-        "synthesis": synthesis,
+        "synthesis": synthesis_with_refs,
         "usage": result.usage,
         "errors": errors,
     }
     sys.stdout.write(json.dumps(out, ensure_ascii=False, default=str))
     sys.stdout.write("\n")
+
+    if output:
+        output.write_text(synthesis_with_refs)
+
     return 0 if synthesis else 1
 
 
-async def _run_stream(*, query, history, system, mode, llm_cfg, embed_cfg, runner_kwargs):
+async def _run_stream(*, query, history, system, mode, llm_cfg, embed_cfg, runner_kwargs, output=None):
     import asyncio as _asyncio
     from .research import loop as _loop
     from .research import writer as _writer
@@ -508,12 +532,14 @@ async def _run_stream(*, query, history, system, mode, llm_cfg, embed_cfg, runne
 
     bus = EventBus()
     saw_response = False
+    accumulated = ""
 
     async def streamer():
-        nonlocal saw_response
+        nonlocal saw_response, accumulated
         async for ev in bus.iterate():
             if ev.type == EventType.RESPONSE:
                 saw_response = True
+                accumulated += ev.data.get("delta", "")
             sys.stdout.write(json.dumps({"type": ev.type.value, "data": ev.data}, ensure_ascii=False, default=str))
             sys.stdout.write("\n")
             sys.stdout.flush()
@@ -529,10 +555,15 @@ async def _run_stream(*, query, history, system, mode, llm_cfg, embed_cfg, runne
     )
     bus.close()
     await stream_task
+
+    if output and accumulated:
+        synthesis_with_refs = accumulated + _writer.format_references(result.sources)
+        output.write_text(synthesis_with_refs)
+
     return 0 if saw_response else 1
 
 
-def _run_tui(*, query, history, system, mode, llm_cfg, embed_cfg, runner_kwargs):
+def _run_tui(*, query, history, system, mode, llm_cfg, embed_cfg, runner_kwargs, output=None):
     import asyncio as _asyncio
     from .research import loop as _loop
     from .research import writer as _writer
@@ -561,6 +592,9 @@ def _run_tui(*, query, history, system, mode, llm_cfg, embed_cfg, runner_kwargs)
         return synthesis
 
     answer = _asyncio.run(one_turn(query, session_history))
+
+    if output:
+        output.write_text(answer)
 
     def _run_one(q: str, hist: list[tuple[str, str]]):
         return one_turn(q, hist)
