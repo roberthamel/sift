@@ -145,19 +145,21 @@ async def _embed_and_rank(
     ctx: ActionContext,
 ) -> list[dict[str, Any]]:
     """Embed query + each snippet, score, filter > 0.5, dedupe > 0.75, top-20."""
-    snippets = []
+    filtered: list[tuple[dict[str, Any], str]] = []
     for r in raw_results:
         content = r.get("content") or r.get("snippet") or r.get("title") or ""
-        snippets.append(content)
-    if not snippets:
+        if content.strip():
+            filtered.append((r, content))
+    if not filtered:
         return []
+    snippets = [c for _, c in filtered]
 
     vectors = await _embeddings.embed_text([query, *snippets], ctx.embed_cfg)
     q_vec = vectors[0]
     s_vecs = vectors[1:]
 
     scored: list[dict[str, Any]] = []
-    for r, content, vec in zip(raw_results, snippets, s_vecs):
+    for (r, content), vec in zip(filtered, s_vecs):
         sim = _utils.cosine_similarity(q_vec, vec)
         if sim <= 0.5:
             continue
