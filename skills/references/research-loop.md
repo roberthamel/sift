@@ -4,22 +4,18 @@
 
 The `sift research` subcommand runs a **Vane-style iterative research loop** entirely in-process. It combines planning, web search, embedding-based relevance ranking, deep scraping with LLM extraction (quality mode), and a streaming synthesis writer.
 
-```
-User query
-    │
-    ▼
-┌────────────────────────────────────────────────────────┐
-│                    Research Loop                        │
-│                                                        │
-│  ┌──────┐    ┌────────┐    ┌──────────┐    ┌───────┐  │
-│  │ Plan │───►│ Search │───►│ Embed/   │───►│ Done? │  │
-│  │(tool)│    │(tool)  │    │ Rank     │    │(tool) │  │
-│  └──────┘    └────────┘    └──────────┘    └───┬───┘  │
-│       ▲                          ▲              │      │
-│       │                          │              ▼      │
-│       └──────────────────────────┘          Synthesis  │
-│                                          (writer)      │
-└────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    Q["User query"] --> Loop
+
+    subgraph Loop["Research Loop"]
+        direction LR
+        P["Plan (tool)"] --> S["Search (tool)"]
+        S --> E["Embed / Rank"]
+        E --> D{"Done? (tool)"}
+        D -- no --> P
+        D -- yes --> W["Synthesis (writer)"]
+    end
 ```
 
 ## Components
