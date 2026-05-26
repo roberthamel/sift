@@ -91,22 +91,28 @@ sift describe ./photo.jpg --vlm
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────┐
-│                   sift CLI (Typer)                   │
-├─────────────────────────────────────────────────────┤
-│  search ──► fetch ──► synthesize (pipeable stages)   │
-│  research (plan → search → embed → scrape → write)   │
-│  describe (image → VLM → description)               │
-│  cache (stats / clear)                               │
-├─────────────────────────────────────────────────────┤
-│  runner.py  →  searxng (in-process Search engine)    │
-│  fetcher.py →  crawl4ai (in-process AsyncWebCrawler) │
-│  llm.py     →  openai (AsyncOpenAI client)           │
-│  cache.py   →  on-disk sha256-keyed JSON files       │
-├─────────────────────────────────────────────────────┤
-│  All logs → rotating file (stdout = pure JSON)       │
-└─────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph CLI["sift CLI (Typer)"]
+        direction TB
+        CMD1["search ──► fetch ──► synthesize"]
+        CMD2["research (plan → search → embed → scrape → write)"]
+        CMD3["describe (image → VLM → description)"]
+        CMD4["cache (stats / clear)"]
+    end
+
+    subgraph Modules["Internal modules"]
+        M1["runner.py — searxng (in-process search engine)"]
+        M2["fetcher.py — crawl4ai (in-process AsyncWebCrawler)"]
+        M3["llm.py — AsyncOpenAI client"]
+        M4["cache.py — on-disk sha256-keyed JSON"]
+    end
+
+    subgraph Logging["Logging"]
+        LOG["Rotating file → stdout = pure JSON"]
+    end
+
+    CLI --> Modules --> Logging
 ```
 
 Key architectural principles:
