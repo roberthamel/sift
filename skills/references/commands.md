@@ -208,7 +208,7 @@ Vane-style deep research loop: plan → search → embed → scrape → extract 
 
 | Argument | Required | Notes |
 |----------|----------|-------|
-| `query` | Yes | The research question |
+| `query` | Yes (no with `--tui`) | The research question; optional when using the interactive TUI |
 
 ### Flags
 
@@ -224,6 +224,7 @@ Vane-style deep research loop: plan → search → embed → scrape → extract 
 | `--system STR` | (none) | — | System instructions injected into writer prompt |
 | `--history-file PATH` | (none) | — | JSON file shaped as `[[role, text], ...]` |
 | `--stream` | off | — | Emit NDJSON events to stdout |
+| `--output` / `-o` | (none) | — | Write synthesis to this markdown file |
 | `--tui` | off | — | Rich Live TUI + follow-up REPL |
 | `--lang` | `all` | — | Search language |
 | `--safesearch 0-2` | `0` | — | Safe search level |
