@@ -504,7 +504,7 @@ async def _run_json(*, query, history, system, mode, llm_cfg, embed_cfg, runner_
     bus.close()
     await collect_task
 
-    synthesis_with_refs = synthesis + _writer.format_references(result.sources)
+    synthesis_with_refs = synthesis + _writer.format_references(result.sources, synthesis)
 
     out = {
         "query": query,
@@ -557,7 +557,7 @@ async def _run_stream(*, query, history, system, mode, llm_cfg, embed_cfg, runne
     await stream_task
 
     if output and accumulated:
-        synthesis_with_refs = accumulated + _writer.format_references(result.sources)
+        synthesis_with_refs = accumulated + _writer.format_references(result.sources, accumulated)
         output.write_text(synthesis_with_refs)
 
     return 0 if saw_response else 1

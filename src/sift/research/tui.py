@@ -132,7 +132,7 @@ async def render_run(
         # value) still keeps refs at the bottom.
         parts: list[str] = []
         if show_references and sources:
-            refs = format_references(sources).strip()
+            refs = format_references(sources, synthesis).strip()
             if refs:
                 parts.append(refs)
         if synthesis:
@@ -188,7 +188,7 @@ async def render_run(
             live.update(_render())
     if on_done:
         on_done()
-    return synthesis + format_references(sources)
+    return synthesis + format_references(sources, synthesis)
 
 
 def followup_loop(

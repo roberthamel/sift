@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from . import prompts as _prompts
@@ -24,15 +25,41 @@ def _client(cfg: LLMConfig):
     )
 
 
-def format_references(sources: list[dict[str, Any]]) -> str:
-    """Build a '## References' section from a source list."""
+_CITATION_RE = re.compile(r"\[(\d+)\]")
+
+
+def cited_indices(text: str | None) -> set[int]:
+    """1-based source numbers actually cited as ``[n]`` in ``text``."""
+    return {int(n) for n in _CITATION_RE.findall(text or "")}
+
+
+def format_references(
+    sources: list[dict[str, Any]], synthesis: str | None = None
+) -> str:
+    """Build a '## References' section from a source list.
+
+    When ``synthesis`` is given, list only the sources actually cited as
+    ``[n]`` in it, preserving their original 1-based numbers so the inline
+    citations keep resolving. If the synthesis contains no ``[n]`` citations
+    at all (model didn't cite, or a non-standard format), fall back to
+    listing every source rather than dropping the section entirely.
+    """
     if not sources:
         return ""
+    cited = cited_indices(synthesis) if synthesis is not None else None
+    if not cited:  # None (no filtering requested) or empty (no citations found)
+        cited = None
     lines = ["\n\n## References\n"]
+    any_listed = False
     for i, s in enumerate(sources, start=1):
+        if cited is not None and i not in cited:
+            continue
+        any_listed = True
         title = s.get("title") or s.get("url") or f"Source {i}"
         url = s.get("url") or ""
         lines.append(f"{i}. [{title}]({url})")
+    if not any_listed:
+        return ""
     return "\n".join(lines)
 
 
