@@ -125,13 +125,32 @@ async def render_run(
             title += f" — iter {current_iter}/{max_iter}"
         top = Panel(tbl, title=title, title_align="left", border_style="dim")
 
-        display_md = synthesis
+        # References render first (static, under the actions panel) so the
+        # streaming synthesis stays the tail the Live view follows. Appending
+        # them below instead pins the viewport to the refs and makes the
+        # streamed answer scroll past unreadably. The file output (the return
+        # value) still keeps refs at the bottom.
+        parts: list[str] = []
         if show_references and sources:
-            display_md += format_references(sources)
-        md = Markdown(display_md or "_thinking…_")
+            refs = format_references(sources).strip()
+            if refs:
+                parts.append(refs)
+        if synthesis:
+            parts.append(synthesis)
+        display_md = "\n\n".join(parts) if parts else "_thinking…_"
+        md = Markdown(display_md)
         return Group(top, md)
 
-    with Live(_render(), console=console, refresh_per_second=12, screen=False) as live:
+    # vertical_overflow="visible" lets a long streamed answer overflow past the
+    # terminal height so the view follows the tail and scrollback keeps working;
+    # the default ("ellipsis") crops to the top and pins you there until the end.
+    with Live(
+        _render(),
+        console=console,
+        refresh_per_second=12,
+        screen=False,
+        vertical_overflow="visible",
+    ) as live:
         async for ev in bus.iterate():
             if ev.type == EventType.PLAN:
                 action_rows.append(("plan", (ev.data.get("plan") or "")[:120]))
