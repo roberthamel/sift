@@ -125,18 +125,18 @@ async def render_run(
             title += f" — iter {current_iter}/{max_iter}"
         top = Panel(tbl, title=title, title_align="left", border_style="dim")
 
-        # References render first (static, under the actions panel) so the
-        # streaming synthesis stays the tail the Live view follows. Appending
-        # them below instead pins the viewport to the refs and makes the
-        # streamed answer scroll past unreadably. The file output (the return
-        # value) still keeps refs at the bottom.
+        # References are withheld until the answer has finished streaming
+        # (`show_references` flips only after the bus drains), then appended
+        # below the answer — natural reading order, and by then nothing is
+        # still streaming so there is no tail for the viewport to fight. The
+        # list is filtered to the sources actually cited in the final answer.
         parts: list[str] = []
+        if synthesis:
+            parts.append(synthesis)
         if show_references and sources:
             refs = format_references(sources, synthesis).strip()
             if refs:
                 parts.append(refs)
-        if synthesis:
-            parts.append(synthesis)
         display_md = "\n\n".join(parts) if parts else "_thinking…_"
         md = Markdown(display_md)
         return Group(top, md)
@@ -184,8 +184,12 @@ async def render_run(
                 action_rows.append(("error", str(ev.data)[:120]))
             elif ev.type == EventType.DONE:
                 action_rows.append(("done", ""))
-                show_references = True
             live.update(_render())
+        # Streaming is fully drained here (producer closed the bus after the
+        # writer finished). Only now reveal the truncated references and do a
+        # final paint, so nothing is shown mid-stream.
+        show_references = True
+        live.update(_render())
     if on_done:
         on_done()
     return synthesis + format_references(sources, synthesis)
