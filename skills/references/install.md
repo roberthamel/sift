@@ -140,11 +140,3 @@ All logs go to a rotating file (1 MB × 3 backups) at:
 
 Override with `--log-file` or `--verbose` (raises to DEBUG).
 
-## Caching
-
-Search responses are cached on-disk at `$XDG_CACHE_HOME/sift/` (defaults to `~/.cache/sift/`):
-- SHA-256 keyed JSON files
-- Default TTL: 3600 seconds (1 hour)
-- `--cache-ttl 0` disables expiration
-- `--no-cache` bypasses read and write
-- `sift cache stats` / `sift cache clear` for management

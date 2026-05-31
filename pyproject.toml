@@ -1,7 +1,7 @@
 [project]
 name = "sift"
 version = "0.1.0"
-description = "Typer CLI that runs SearXNG search and crawl4ai page-fetch in-process; prints LLM-friendly JSON."
+description = "In-process research CLI: SearXNG search + crawl4ai page-read + LLM synthesis."
 readme = "README.md"
 authors = [
     { name = "Robert Hamel", email = "roberthamel@users.noreply.github.com" }
