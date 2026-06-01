@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import sys
 import time
-from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from .events import Event, EventBus, EventType
@@ -196,20 +195,18 @@ async def render_run(
 
 
 def followup_loop(
-    run_one: Callable[[str, list[tuple[str, str]]], Awaitable[str]],
-    initial_history: list[tuple[str, str]],
+    run_turn: Callable[[str], Awaitable[str]],
+    session: Any,
 ) -> None:
-    """Synchronous follow-up REPL. Each turn appends (human, q) and
-    (assistant, answer) to a shared history list.
+    """Synchronous follow-up REPL. Runs until Ctrl-D (EOF).
 
-    Special commands:
-      w         — write the last answer to a markdown file
-      blank     — exit
+    ``run_turn(q)`` is an async callable that returns the updated document.
+    ``session`` must expose a ``.path`` attribute and a ``.save(content)`` method.
+
+    Blank lines re-prompt; only EOF (Ctrl-D) exits.
     """
-    history = list(initial_history)
-    last_synthesis = history[-1][1] if len(history) >= 2 else ""
     print()
-    print("---  follow-up mode  (blank line or Ctrl-D to exit, 'w' to write to file)  ---")
+    print("---  follow-up mode  (Ctrl-D to exit)  ---")
     while True:
         try:
             raw = input("> ").strip()
@@ -217,34 +214,12 @@ def followup_loop(
             print()
             return
         if not raw:
-            return
-        if raw == "w":
-            _write_to_file(last_synthesis)
             continue
         try:
-            answer = asyncio.run(run_one(raw, history))
+            updated_doc = asyncio.run(run_turn(raw))
         except KeyboardInterrupt:
             print()
             return
-        history.append(("human", raw))
-        history.append(("assistant", answer))
-        last_synthesis = answer
-
-
-def _write_to_file(synthesis: str) -> None:
-    """Prompt for a file path and write synthesis to it."""
-    try:
-        path_str = input("file path: ").strip()
-    except (EOFError, KeyboardInterrupt):
-        print()
-        return
-    if not path_str:
-        print("  cancelled")
-        return
-    path = Path(path_str).expanduser().resolve()
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(synthesis)
-        print(f"  written to {path}")
-    except OSError as exc:
-        print(f"  error: {exc}")
+        if updated_doc:
+            session.save(updated_doc)
+            print(f"\033[2msaved → {session.path}\033[0m")

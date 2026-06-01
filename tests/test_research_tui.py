@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import io
+from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -25,7 +27,6 @@ def test_render_run_collects_response_deltas(monkeypatch):
             bus.emit(Event(EventType.DONE, {}))
             bus.close()
 
-        # Force Rich onto a string buffer so the test does not need a real tty.
         import rich.console as rc
 
         real_console = rc.Console
@@ -43,17 +44,32 @@ def test_render_run_collects_response_deltas(monkeypatch):
     assert out == "Hello world."
 
 
-def test_followup_loop_exits_on_blank(monkeypatch, capsys):
-    inputs = iter([""])
-    monkeypatch.setattr("builtins.input", lambda *_: next(inputs))
+def test_followup_loop_blank_line_reprompts(monkeypatch, capsys):
+    """Blank line should re-prompt, not exit."""
+    inputs = iter(["", ""])
+
+    def _input(*_):
+        try:
+            val = next(inputs)
+            if val == "":
+                return ""
+            return val
+        except StopIteration:
+            raise EOFError
+
+    monkeypatch.setattr("builtins.input", _input)
 
     calls = []
 
-    async def runner(q, hist):
-        calls.append((q, list(hist)))
-        return "ans"
+    async def run_turn(q):
+        calls.append(q)
+        return "doc"
 
-    _tui.followup_loop(runner, [])
+    session = MagicMock()
+    session.path = Path("/tmp/test.md")
+
+    _tui.followup_loop(run_turn, session)
+    # Both inputs were blank → re-prompted each time → EOF raised → exit
     assert calls == []
 
 
@@ -63,7 +79,63 @@ def test_followup_loop_exits_on_eof(monkeypatch):
 
     monkeypatch.setattr("builtins.input", _raise)
 
-    async def runner(q, hist):
-        return "ans"
+    async def run_turn(q):
+        return "doc"
 
-    _tui.followup_loop(runner, [])
+    session = MagicMock()
+    _tui.followup_loop(run_turn, session)
+
+
+def test_followup_loop_saves_and_prints_path(monkeypatch, capsys):
+    """Each turn should call session.save and print 'saved → <path>'."""
+    call_count = [0]
+
+    def _input(*_):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return "follow-up question"
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", _input)
+
+    turn_results = []
+
+    async def run_turn(q):
+        turn_results.append(q)
+        return "updated document"
+
+    session = MagicMock()
+    session.path = Path(".ai/research/topic/doc.md")
+
+    _tui.followup_loop(run_turn, session)
+
+    assert turn_results == ["follow-up question"]
+    session.save.assert_called_once_with("updated document")
+    captured = capsys.readouterr()
+    assert "saved" in captured.out
+    assert str(session.path) in captured.out
+
+
+def test_followup_loop_no_w_command(monkeypatch):
+    """The 'w' input should be treated as a research query, not a write command."""
+    call_count = [0]
+
+    def _input(*_):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return "w"
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", _input)
+
+    queries = []
+
+    async def run_turn(q):
+        queries.append(q)
+        return "result"
+
+    session = MagicMock()
+    session.path = Path("/tmp/x.md")
+
+    _tui.followup_loop(run_turn, session)
+    assert queries == ["w"]

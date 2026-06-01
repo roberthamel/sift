@@ -25,3 +25,15 @@ def test_research_options_present():
 def test_tui_flag_absent():
     r = CliRunner().invoke(app, ["--help"])
     assert "--tui" not in r.stdout
+
+
+def test_output_flag_absent():
+    r = CliRunner().invoke(app, ["--help"])
+    assert "--output" not in r.stdout
+    assert "-o" not in r.stdout
+
+
+def test_continue_and_print_present():
+    r = CliRunner().invoke(app, ["--help"])
+    assert "--continue" in r.stdout
+    assert "--print" in r.stdout

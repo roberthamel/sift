@@ -192,6 +192,52 @@ def test_loop_terminates_on_zero_tool_calls(monkeypatch):
     assert len(completions.calls) == 1
 
 
+def test_loop_document_embedded_in_user_message(monkeypatch):
+    _stub_search(monkeypatch, [])
+    completions = _ScriptedCompletions([[("done", {})]])
+    bus = EventBus()
+    asyncio.run(
+        _loop.run(
+            query="follow-up",
+            history=None,
+            system=None,
+            mode="speed",
+            llm_cfg=LLMConfig(host="x", api_key=None, model="m"),
+            embed_cfg=EmbedConfig(host="x", api_key=None, model="m"),
+            bus=bus,
+            client=_Client(completions),
+            document="## Existing Doc\n\nPrior findings.",
+        )
+    )
+    first_call = completions.calls[0]
+    user_msg = first_call["messages"][1]
+    assert "<document>" in user_msg["content"]
+    assert "Existing Doc" in user_msg["content"]
+    assert "Prior findings" in user_msg["content"]
+    assert "follow-up" in user_msg["content"]
+
+
+def test_loop_no_document_block_when_document_is_none(monkeypatch):
+    _stub_search(monkeypatch, [])
+    completions = _ScriptedCompletions([[("done", {})]])
+    bus = EventBus()
+    asyncio.run(
+        _loop.run(
+            query="question",
+            history=None,
+            system=None,
+            mode="speed",
+            llm_cfg=LLMConfig(host="x", api_key=None, model="m"),
+            embed_cfg=EmbedConfig(host="x", api_key=None, model="m"),
+            bus=bus,
+            client=_Client(completions),
+            document=None,
+        )
+    )
+    user_msg = completions.calls[0]["messages"][1]
+    assert "<document>" not in user_msg["content"]
+
+
 def test_loop_history_threaded_into_first_message(monkeypatch):
     _stub_search(monkeypatch, [])
     completions = _ScriptedCompletions([[("done", {})]])

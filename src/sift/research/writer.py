@@ -83,10 +83,20 @@ async def write(
     llm_cfg: LLMConfig,
     bus: EventBus,
     client=None,
+    existing_doc: str | None = None,
 ) -> str:
-    """Stream a markdown synthesis. Returns the full text, also emitting events."""
+    """Stream a markdown synthesis. Returns the full text, also emitting events.
+
+    When ``existing_doc`` is provided the writer uses the revision prompt,
+    returning a full updated document rather than a fresh answer.
+    """
     context = _format_context(sources)
-    sys_prompt = _prompts.get_writer_prompt(context, system or "", mode)
+    if existing_doc is not None:
+        sys_prompt = _prompts.get_document_revision_prompt(
+            context, system or "", mode, existing_doc
+        )
+    else:
+        sys_prompt = _prompts.get_writer_prompt(context, system or "", mode)
 
     convo: list[dict[str, Any]] = [{"role": "system", "content": sys_prompt}]
     if history:

@@ -36,18 +36,30 @@ class ResearcherResult:
     usage: dict[str, int] = field(default_factory=lambda: {"prompt": 0, "completion": 0, "total": 0})
 
 
-def _build_history(history: list[tuple[str, str]] | None, query: str) -> list[dict[str, Any]]:
-    """Build the initial user message embedding chat history (Vane-style)."""
+def _build_history(
+    history: list[tuple[str, str]] | None,
+    query: str,
+    document: str | None = None,
+) -> list[dict[str, Any]]:
+    """Build the initial user message embedding chat history (Vane-style).
+
+    When ``document`` is provided a ``<document>`` block is prepended so the
+    researcher can base search decisions on what is already in the document.
+    """
     convo_lines = []
     if history:
         for role, text in history[-10:]:
             convo_lines.append(f"{role.capitalize()}: {text}")
     convo = "\n".join(convo_lines)
-    user_msg = (
+    conv_block = (
         f"<conversation>\n{convo}\nUser: {query}\n</conversation>"
         if convo
         else f"User: {query}"
     )
+    if document:
+        user_msg = f"<document>\n{document}\n</document>\n\n{conv_block}"
+    else:
+        user_msg = conv_block
     return [{"role": "user", "content": user_msg}]
 
 
@@ -113,8 +125,13 @@ async def run(
     bus: EventBus,
     runner_kwargs: dict[str, Any] | None = None,
     client=None,
+    document: str | None = None,
 ) -> ResearcherResult:
-    """Drive the researcher loop. `client` allows test injection."""
+    """Drive the researcher loop. ``client`` allows test injection.
+
+    ``document`` is an optional existing research document injected as context
+    so the researcher can decide what new searches are needed.
+    """
     mode = mode if mode in MAX_ITER else "balanced"
     max_iter = MAX_ITER[mode]
     ctx = ActionContext(
@@ -131,7 +148,7 @@ async def run(
 
     bus.emit(Event(EventType.INIT, {"query": query, "mode": mode, "max_iter": max_iter}))
 
-    messages: list[dict[str, Any]] = _build_history(history, query)
+    messages: list[dict[str, Any]] = _build_history(history, query, document=document)
     tools = _actions.tool_schemas(mode)
     action_desc = _actions.action_descriptions(mode)
 

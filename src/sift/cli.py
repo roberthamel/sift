@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import typer
@@ -12,9 +13,24 @@ app = typer.Typer(no_args_is_help=False, add_completion=False)
 log = logging.getLogger("sift")
 
 
+@dataclass
+class _Session:
+    """Holds the live path and document content for a research conversation."""
+
+    path: Path | None = None
+    document: str | None = None
+    continuing: Path | None = None
+
+    def save(self, content: str) -> None:
+        from .research import persist as _persist
+
+        _persist.save(self.path, content)
+        self.document = content
+
+
 @app.command()
 def main(
-    query: str | None = typer.Argument(None, help="Research question (omit to enter interactive TUI)"),
+    query: str | None = typer.Argument(None, help="Research question (omit to enter interactive REPL)"),
     mode: str = typer.Option("balanced", "--mode", help="speed | balanced | quality"),
     llm_host: str | None = typer.Option(None, "--llm-host", envvar="SIFT_LLM_HOST"),
     llm_apikey: str | None = typer.Option(None, "--llm-apikey", envvar="SIFT_LLM_APIKEY"),
@@ -25,7 +41,8 @@ def main(
     system: str | None = typer.Option(None, "--system", help="System instructions injected into the writer prompt"),
     history_file: Path | None = typer.Option(None, "--history-file", help="JSON file shaped as [[role, text], ...]"),
     stream: bool = typer.Option(False, "--stream", help="Emit NDJSON events to stdout"),
-    output: Path | None = typer.Option(None, "--output", "-o", help="Write synthesis to this markdown file"),
+    cont: Path | None = typer.Option(None, "--continue", "-c", help="Continue an existing research document"),
+    print_: bool = typer.Option(False, "--print", "-p", help="Non-interactive: print final answer to stdout and exit"),
     lang: str = typer.Option("all", "--lang"),
     safesearch: int = typer.Option(0, "--safesearch", min=0, max=2),
     allow: list[str] = typer.Option(None, "--allow"),
@@ -57,10 +74,6 @@ def main(
         typer.echo(f"unknown --mode: {mode}", err=True)
         raise typer.Exit(code=2)
 
-    if output is not None and query is None:
-        typer.echo("a question is required when -o is given", err=True)
-        raise typer.Exit(code=2)
-
     history: list[tuple[str, str]] = []
     if history_file is not None:
         try:
@@ -79,6 +92,66 @@ def main(
         "block": list(block or []) or None,
     }
 
+    # Build session (preload if --continue).
+    session = _Session()
+    if cont is not None:
+        if not cont.exists():
+            typer.echo(f"--continue: file not found: {cont}", err=True)
+            raise typer.Exit(code=2)
+        session.path = cont
+        session.document = cont.read_text()
+        session.continuing = cont
+
+    # --print mode: one turn, no REPL, print answer to stdout.
+    if print_:
+        if query is None and cont is None:
+            typer.echo("--print requires a query or --continue", err=True)
+            raise typer.Exit(code=2)
+        if query is None:
+            # --continue + --print with no query: refresh the document.
+            query = "Update and refresh this research document with latest findings."
+
+        import asyncio as _asyncio
+
+        if stream:
+            exit_code = _asyncio.run(
+                _run_stream(
+                    query=query, history=history, system=system, mode=mode,
+                    llm_cfg=llm_cfg, embed_cfg=embed_cfg, runner_kwargs=runner_kwargs,
+                    session=session,
+                )
+            )
+        else:
+            doc = _asyncio.run(
+                _run_quiet(
+                    query=query, history=history, system=system, mode=mode,
+                    llm_cfg=llm_cfg, embed_cfg=embed_cfg, runner_kwargs=runner_kwargs,
+                    session=session,
+                )
+            )
+            sys.stdout.write(doc)
+            if doc and not doc.endswith("\n"):
+                sys.stdout.write("\n")
+            exit_code = 0 if doc else 1
+        raise typer.Exit(code=exit_code)
+
+    # --stream (non-print): one-shot NDJSON, no REPL.
+    if stream:
+        import asyncio as _asyncio
+
+        if query is None:
+            typer.echo("--stream requires a query", err=True)
+            raise typer.Exit(code=2)
+        exit_code = _asyncio.run(
+            _run_stream(
+                query=query, history=history, system=system, mode=mode,
+                llm_cfg=llm_cfg, embed_cfg=embed_cfg, runner_kwargs=runner_kwargs,
+                session=session,
+            )
+        )
+        raise typer.Exit(code=exit_code)
+
+    # Default: REPL mode.
     if query is None:
         try:
             query = input("research question: ").strip()
@@ -88,37 +161,101 @@ def main(
         if not query:
             typer.echo("no query provided", err=True)
             raise typer.Exit(code=2)
-        _run_tui(
+
+    import asyncio as _asyncio
+
+    doc = _asyncio.run(
+        _run_tui_turn(
             query=query, history=history, system=system, mode=mode,
             llm_cfg=llm_cfg, embed_cfg=embed_cfg, runner_kwargs=runner_kwargs,
-            output=output, repl=True,
+            session=session,
         )
-        return
-
-    if stream:
-        import asyncio
-        exit_code = asyncio.run(
-            _run_stream(
-                query=query, history=history, system=system, mode=mode,
-                llm_cfg=llm_cfg, embed_cfg=embed_cfg, runner_kwargs=runner_kwargs,
-                output=output,
-            )
-        )
-        raise typer.Exit(code=exit_code)
-
-    answer = _run_tui(
-        query=query, history=history, system=system, mode=mode,
-        llm_cfg=llm_cfg, embed_cfg=embed_cfg, runner_kwargs=runner_kwargs,
-        output=output, repl=False,
     )
-    raise typer.Exit(code=0 if answer else 1)
+    if doc:
+        print(f"\033[2msaved → {session.path}\033[0m")
+
+    session_history = list(history)
+    session_history.append(("human", query))
+    session_history.append(("assistant", doc))
+
+    from .research import tui as _tui
+    from .research.events import EventBus
+
+    async def run_turn(q: str) -> str:
+        from .research import loop as _loop
+        from .research import writer as _writer
+
+        bus = EventBus()
+
+        async def producer():
+            result = await _loop.run(
+                query=q, history=session_history, system=system, mode=mode,
+                llm_cfg=llm_cfg, embed_cfg=embed_cfg, bus=bus,
+                runner_kwargs=runner_kwargs, document=session.document,
+            )
+            await _writer.write(
+                query=q, history=session_history, system=system,
+                sources=result.sources, mode=mode, llm_cfg=llm_cfg, bus=bus,
+                existing_doc=session.document,
+            )
+            bus.close()
+
+        prod = _asyncio.create_task(producer())
+        updated_doc = await _tui.render_run(bus)
+        await prod
+        session_history.append(("human", q))
+        session_history.append(("assistant", updated_doc))
+        return updated_doc
+
+    _tui.followup_loop(run_turn, session)
+    raise typer.Exit(code=0)
 
 
-async def _run_stream(*, query, history, system, mode, llm_cfg, embed_cfg, runner_kwargs, output=None):
+async def _run_quiet(
+    *, query, history, system, mode, llm_cfg, embed_cfg, runner_kwargs, session: _Session
+) -> str:
+    """Run one research turn without the TUI. Returns the full document."""
+    from .research import loop as _loop
+    from .research import persist as _persist
+    from .research import writer as _writer
+    from .research.events import EventBus
+
+    bus = EventBus()
+
+    if session.path is None:
+        scope, slug = await _persist.pick_location(query, llm_cfg)
+        session.path = _persist.resolve_path(scope, slug, continuing=session.continuing)
+
+    result = await _loop.run(
+        query=query, history=history, system=system, mode=mode,
+        llm_cfg=llm_cfg, embed_cfg=embed_cfg, bus=bus, runner_kwargs=runner_kwargs,
+        document=session.document,
+    )
+    answer = await _writer.write(
+        query=query, history=history, system=system,
+        sources=result.sources, mode=mode, llm_cfg=llm_cfg, bus=bus,
+        existing_doc=session.document,
+    )
+    bus.close()
+
+    full_doc = (answer + _writer.format_references(result.sources, answer)) if answer else ""
+    if full_doc:
+        session.save(full_doc)
+    return full_doc
+
+
+async def _run_stream(
+    *, query, history, system, mode, llm_cfg, embed_cfg, runner_kwargs, session: _Session
+) -> int:
     import asyncio as _asyncio
     from .research import loop as _loop
+    from .research import persist as _persist
     from .research import writer as _writer
     from .research.events import EventBus, EventType
+
+    if session.path is None:
+        scope, slug = await _persist.pick_location(query, llm_cfg)
+        session.path = _persist.resolve_path(scope, slug, continuing=session.continuing)
 
     bus = EventBus()
     saw_response = False
@@ -138,62 +275,57 @@ async def _run_stream(*, query, history, system, mode, llm_cfg, embed_cfg, runne
     result = await _loop.run(
         query=query, history=history, system=system, mode=mode,
         llm_cfg=llm_cfg, embed_cfg=embed_cfg, bus=bus, runner_kwargs=runner_kwargs,
+        document=session.document,
     )
     await _writer.write(
         query=query, history=history, system=system,
         sources=result.sources, mode=mode, llm_cfg=llm_cfg, bus=bus,
+        existing_doc=session.document,
     )
     bus.close()
     await stream_task
 
-    if output and accumulated:
-        from .research import writer as _writer2
-        synthesis_with_refs = accumulated + _writer2.format_references(result.sources, accumulated)
-        output.write_text(synthesis_with_refs)
+    if accumulated:
+        full_doc = accumulated + _writer.format_references(result.sources, accumulated)
+        session.save(full_doc)
 
     return 0 if saw_response else 1
 
 
-def _run_tui(*, query, history, system, mode, llm_cfg, embed_cfg, runner_kwargs, output=None, repl=True):
+async def _run_tui_turn(
+    *, query, history, system, mode, llm_cfg, embed_cfg, runner_kwargs, session: _Session
+) -> str:
+    """Run one research turn with the TUI. Picks location and saves. Returns full doc."""
     import asyncio as _asyncio
     from .research import loop as _loop
-    from .research import writer as _writer
+    from .research import persist as _persist
     from .research import tui as _tui
+    from .research import writer as _writer
     from .research.events import EventBus
 
-    async def one_turn(q: str, hist: list[tuple[str, str]]) -> str:
-        bus = EventBus()
+    bus = EventBus()
 
-        async def producer():
-            result = await _loop.run(
-                query=q, history=hist, system=system, mode=mode,
-                llm_cfg=llm_cfg, embed_cfg=embed_cfg, bus=bus, runner_kwargs=runner_kwargs,
-            )
-            await _writer.write(
-                query=q, history=hist, system=system,
-                sources=result.sources, mode=mode, llm_cfg=llm_cfg, bus=bus,
-            )
-            bus.close()
+    async def producer():
+        if session.path is None:
+            scope, slug = await _persist.pick_location(query, llm_cfg)
+            session.path = _persist.resolve_path(scope, slug, continuing=session.continuing)
 
-        prod = _asyncio.create_task(producer())
-        synthesis = await _tui.render_run(bus)
-        await prod
-        return synthesis
+        result = await _loop.run(
+            query=query, history=history, system=system, mode=mode,
+            llm_cfg=llm_cfg, embed_cfg=embed_cfg, bus=bus, runner_kwargs=runner_kwargs,
+            document=session.document,
+        )
+        await _writer.write(
+            query=query, history=history, system=system,
+            sources=result.sources, mode=mode, llm_cfg=llm_cfg, bus=bus,
+            existing_doc=session.document,
+        )
+        bus.close()
 
-    answer = _asyncio.run(one_turn(query, history))
+    prod = _asyncio.create_task(producer())
+    full_doc = await _tui.render_run(bus)
+    await prod
 
-    if output:
-        output.write_text(answer)
-
-    if not repl:
-        return answer
-
-    session_history = list(history)
-    session_history.append(("human", query))
-    session_history.append(("assistant", answer))
-
-    def _run_one(q: str, hist: list[tuple[str, str]]):
-        return one_turn(q, hist)
-
-    _tui.followup_loop(_run_one, session_history)
-    return answer
+    if full_doc:
+        session.save(full_doc)
+    return full_doc

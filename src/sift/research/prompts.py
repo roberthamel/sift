@@ -201,6 +201,48 @@ Current date & time in ISO format (UTC timezone) is: {now}.
 """
 
 
+def get_document_revision_prompt(
+    context: str, system_instructions: str, mode: Mode, existing_doc: str
+) -> str:
+    """Return a system prompt that instructs the writer to revise an existing document."""
+    quality_addendum = ""
+    if mode == "quality":
+        quality_addendum = (
+            "- YOU ARE IN QUALITY MODE. The revised document must be thorough and "
+            "comprehensive — at least 2000 words. Cover every relevant angle."
+        )
+    now = datetime.now(timezone.utc).isoformat()
+    return f"""
+You are sift, an AI model skilled in web research and crafting detailed research documents.
+
+Your task is to REVISE the existing research document by folding in new findings from <context>.
+
+### Rules
+- Return the FULL revised document — not a diff, not a summary.
+- Preserve all still-relevant content from <existing_document>.
+- Integrate new information from <context> naturally.
+- Remove content that is now contradicted or superseded.
+- Use clear headings, neutral journalistic tone, and inline [number] citations.
+- Every factual claim should cite a source from <context>.
+- Do NOT include a ## References section — one is appended automatically.
+- End with a concluding paragraph.
+{quality_addendum}
+
+### User instructions
+{system_instructions}
+
+<existing_document>
+{existing_doc}
+</existing_document>
+
+<context>
+{context}
+</context>
+
+Current date & time (UTC): {now}.
+"""
+
+
 PICKER_PROMPT = """\
 Assistant is an AI search result picker. Assistant's task is to pick 2-3 of the most relevant search results based off the query which can then be scraped for information to answer the query.
 

@@ -52,6 +52,52 @@ class _Client:
         self.chat = type("X", (), {"completions": comp})()
 
 
+def test_writer_revision_prompt_receives_existing_doc():
+    sources = [{"url": "http://a/", "title": "A", "content": "new facts"}]
+    comp = _Completions(["Revised content."])
+    bus = EventBus()
+    asyncio.run(
+        writer.write(
+            query="update",
+            history=None,
+            system=None,
+            sources=sources,
+            mode="balanced",
+            llm_cfg=LLMConfig(host="x", api_key=None, model="m"),
+            bus=bus,
+            client=_Client(comp),
+            existing_doc="## Old heading\n\nOld content.",
+        )
+    )
+    bus.close()
+    sys_msg = comp.last_messages[0]["content"]
+    assert "Old heading" in sys_msg
+    assert "Old content" in sys_msg
+    assert "existing_document" in sys_msg or "existing document" in sys_msg.lower()
+
+
+def test_writer_first_turn_unchanged_without_existing_doc():
+    sources = [{"url": "http://a/", "title": "A", "content": "facts"}]
+    comp = _Completions(["Fresh answer."])
+    bus = EventBus()
+    asyncio.run(
+        writer.write(
+            query="what is X",
+            history=None,
+            system=None,
+            sources=sources,
+            mode="balanced",
+            llm_cfg=LLMConfig(host="x", api_key=None, model="m"),
+            bus=bus,
+            client=_Client(comp),
+        )
+    )
+    bus.close()
+    sys_msg = comp.last_messages[0]["content"]
+    # Standard writer prompt, not revision prompt
+    assert "existing_document" not in sys_msg
+
+
 def test_writer_streams_deltas_and_emits_sources():
     sources = [
         {"url": "http://a/", "title": "A", "content": "alpha facts"},
