@@ -41,9 +41,6 @@ uv run sift --help
 honor the project's `[tool.uv].override-dependencies` or
 `[tool.uv.extra-build-dependencies]`, both of which are load-bearing here.
 
-The wrapper-script approach sidesteps both by reusing the project's
-already-correct `uv sync` environment.
-
 For a hermetic dev loop without installing on PATH:
 
 ```sh
@@ -54,22 +51,57 @@ uv run sift --help
 
 ## Usage
 
+Every research session is automatically saved as a markdown file under
+`.ai/research/<scope>/` in the current directory. The LLM picks a topical
+folder name and filename from the opening question.
+
 ```sh
-# Interactive research TUI (follow-up REPL included)
+# Interactive REPL — prompts for the first question, then loops until Ctrl-D
 sift
 
-# One-shot research: live output, then exit
-sift "what is HTTP/3"
+# REPL seeded with a first question
+sift "give me an introduction to Viper in a Golang CLI"
 
-# One-shot research + write answer to a file
-sift -o ANSWER.md "what is HTTP/3"
+# Non-interactive: research once, print answer to stdout, save to file, exit
+sift --print "what is HTTP/3"
+
+# Continue an existing research document (preloads it as context)
+sift --continue .ai/research/golang/viper-config-library.md
+sift --continue .ai/research/golang/viper-config-library.md "how does it handle env vars?"
 
 # Emit NDJSON events for programmatic consumption
 sift --stream "what is HTTP/3"
 ```
 
-A question is required whenever `-o` is given. `sift -o file` with no
-question exits non-zero with an error message.
+### Auto-save and document lifecycle
+
+Each turn's synthesized answer is written to `.ai/research/<scope>/<filename>.md`.
+The scope and filename are chosen by the LLM from the opening question (e.g.
+`golang/viper-config-library.md`). If the file already exists, a numeric suffix is
+appended (`-2`, `-3`, …) — existing files are never clobbered.
+
+Follow-up turns **merge** new findings into the same file rather than replacing it.
+The document grows and stays coherent across the whole conversation.
+
+Every saved file includes YAML frontmatter:
+
+```markdown
+---
+queries:
+  - give me an introduction to Viper in a Golang CLI
+  - how does it handle environment variables?
+created: 2025-06-01T14:22:10Z
+updated: 2025-06-01T14:28:44Z
+turns: 2
+---
+
+## Introduction to Viper
+…
+```
+
+`--continue <path>` reopens a saved document: its content becomes pre-context for the
+researcher (informing what new searches to run) and the writer (merging new findings
+into the existing text). The same file is updated in place.
 
 ### All options
 
@@ -77,8 +109,9 @@ question exits non-zero with an error message.
 | --- | --- | --- | --- |
 | `QUERY` (positional) | (prompt if omitted) | — | Research question |
 | `--mode {speed,balanced,quality}` | `balanced` | — | Research depth |
+| `--print / -p` | off | — | Non-interactive: print answer to stdout and exit |
+| `--continue / -c PATH` | (none) | — | Continue an existing research document |
 | `--stream` | off | — | Emit NDJSON events to stdout |
-| `-o / --output PATH` | (none) | — | Write synthesis markdown to file |
 | `--llm-host URL` | — | `SIFT_LLM_HOST` | OpenAI-compatible base URL |
 | `--llm-apikey KEY` | — | `SIFT_LLM_APIKEY` | Use `-` for local endpoints |
 | `--llm-model NAME` | — | `SIFT_LLM_MODEL` | Model identifier |
@@ -107,9 +140,9 @@ question exits non-zero with an error message.
 
 One JSON object per line: `{"type": "plan"|"search"|"search_results"|"reading"|"extracted"|"response"|"sources"|"done"|"error", "data": {...}}`
 
-`response` events carry `{"delta": "..."}` chunks that concatenate to the
-full synthesis. `sources` carries the ranked source list. Combine `--stream`
-with `-o` to get both the event stream and a clean markdown file.
+`response` events carry `{"delta": "..."}` chunks that concatenate to the full
+synthesis. `sources` carries the ranked source list. `--stream` is composable
+with `--print` for non-interactive scripted use.
 
 ## Domain filters
 
@@ -126,9 +159,9 @@ sift --block reddit.com --block twitter.com "open source licenses"
 
 | Code | Meaning |
 | --- | --- |
-| `0` | Success |
+| `0` | Success (REPL exited cleanly, or `--print`/`--stream` produced a result) |
 | `1` | No synthesis produced |
-| `2` | Bad invocation (missing question with `-o`, unknown `--mode`, LLM/embed not configured, bad history file) |
+| `2` | Bad invocation (missing question with `--print`, unknown `--mode`, LLM/embed not configured, bad history file, `--continue` file not found) |
 
 ## Log file
 
