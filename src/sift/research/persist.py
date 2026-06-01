@@ -27,11 +27,56 @@ def _slugify(s: str) -> str:
     return s[:_MAX_SLUG_LEN].rstrip("-") or "research"
 
 
+# Common question-framing words that carry no topical information.
+_FILLER = frozenset({
+    "a", "an", "the", "i", "me", "my", "our", "your",
+    "give", "get", "show", "tell", "help", "explain", "describe",
+    "please", "can", "could", "would", "should", "will",
+    "do", "does", "did", "is", "are", "was", "were",
+    "be", "been", "being", "have", "has", "had",
+    "how", "what", "when", "where", "who", "which", "why",
+    "intro", "introduction", "overview", "guide", "tutorial", "summary",
+    "about", "on", "in", "of", "to", "for", "with", "by", "from",
+    "into", "up", "out", "some", "any", "and", "or", "but", "so",
+})
+
+
+def _content_words(query: str) -> list[str]:
+    """Return the substantive words from a query, filtering out filler."""
+    words = re.findall(r"[a-zA-Z0-9]+", query.lower())
+    meaningful = [w for w in words if w not in _FILLER]
+    return meaningful if meaningful else words
+
+
 def _fallback_slug(query: str) -> tuple[str, str]:
-    words = query.split()
-    scope = _slugify(" ".join(words[:3])) or "research"
-    slug = _slugify(" ".join(words[:8])) or "research"
+    words = _content_words(query)
+    scope = _slugify(" ".join(words[:2])) or "research"
+    slug = _slugify(" ".join(words[:6])) or "research"
     return scope, slug
+
+
+_PICK_SYSTEM = """\
+You organise research notes into folders and files. Given a research question, \
+decide on a concise topical scope (the subject area) and a descriptive filename \
+(the specific topic). Think carefully: don't just copy words from the question — \
+reflect the underlying subject matter.
+
+Rules:
+- scope: 1-3 words, the broad subject area (e.g. "golang", "auth", "react", "networking")
+- filename: 2-5 words, the specific topic of this research (e.g. "viper-config-library", \
+"jwt-refresh-flow", "react-hooks-patterns")
+- Both in kebab-case, all lowercase.
+- Return ONLY raw JSON, no markdown fences: {"scope": "...", "filename": "..."}
+"""
+
+_PICK_EXAMPLES = [
+    ("Give me an introduction on how to use Viper in a Golang CLI",
+     '{"scope": "golang", "filename": "viper-config-library"}'),
+    ("What are best practices for JWT refresh tokens?",
+     '{"scope": "auth", "filename": "jwt-refresh-best-practices"}'),
+    ("Explain React hooks and when to use useEffect",
+     '{"scope": "react", "filename": "hooks-and-useeffect"}'),
+]
 
 
 async def pick_location(
@@ -42,7 +87,8 @@ async def pick_location(
     """Ask the LLM to choose a (scope, slug) pair for the research document.
 
     Returns (scope, slug) where both are safe kebab-case strings. Falls back
-    to a deterministic word-based slug if the LLM call fails.
+    to a content-word-based slug (filtering question filler) if the LLM call
+    fails.
     """
     import openai
 
@@ -53,19 +99,17 @@ async def pick_location(
             timeout=llm_cfg.timeout,
         )
 
-    prompt = (
-        "Given the research question below, choose:\n"
-        "  scope: a short topical folder name (1-3 words, kebab-case)\n"
-        "  filename: a descriptive file slug (1-5 words, kebab-case, no extension)\n"
-        'Return ONLY raw JSON: {"scope": "...", "filename": "..."}\n\n'
-        f"Question: {query}"
-    )
+    messages: list[dict] = [{"role": "system", "content": _PICK_SYSTEM}]
+    for q, a in _PICK_EXAMPLES:
+        messages.append({"role": "user", "content": q})
+        messages.append({"role": "assistant", "content": a})
+    messages.append({"role": "user", "content": query})
 
     try:
         resp = await client.chat.completions.create(
             model=llm_cfg.model,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=64,
+            messages=messages,
+            max_tokens=80,
         )
         raw = (resp.choices[0].message.content or "").strip()
         m = re.search(r"\{[^}]+\}", raw, re.DOTALL)
@@ -76,7 +120,7 @@ async def pick_location(
             if scope and slug:
                 return scope, slug
     except Exception:  # noqa: BLE001
-        log.debug("pick_location LLM call failed, using word-based fallback", exc_info=True)
+        log.debug("pick_location LLM call failed, using content-word fallback", exc_info=True)
 
     return _fallback_slug(query)
 
