@@ -20,9 +20,9 @@ class _Session:
     path: Path | None = None
     document: str | None = None  # full file content including frontmatter
     continuing: Path | None = None
-    initial_query: str | None = None  # opening question, preserved across turns
-    created: str | None = None        # ISO timestamp of first save
-    turns: int = 0                    # number of completed research turns
+    queries: list = field(default_factory=list)  # all questions asked, in order
+    created: str | None = None                   # ISO timestamp of first save
+    turns: int = 0                               # number of completed research turns
 
     @property
     def body(self) -> str | None:
@@ -46,7 +46,7 @@ class _Session:
         self.turns += 1
 
         meta = {
-            "query": self.initial_query or "",
+            "queries": list(self.queries),
             "created": self.created,
             "updated": now,
             "turns": self.turns,
@@ -132,7 +132,12 @@ def main(
         session.path = cont
         session.document = text
         session.continuing = cont
-        session.initial_query = meta.get("query") or None
+        # Support both old "query" (scalar) and new "queries" (list) frontmatter.
+        loaded_queries = meta.get("queries")
+        if isinstance(loaded_queries, list):
+            session.queries = loaded_queries
+        elif meta.get("query"):
+            session.queries = [meta["query"]]
         session.created = meta.get("created") or None
         session.turns = int(meta.get("turns", 0))
 
@@ -144,8 +149,7 @@ def main(
         if query is None:
             # --continue + --print with no query: refresh the document.
             query = "Update and refresh this research document with latest findings."
-        if not session.initial_query:
-            session.initial_query = query
+        session.queries.append(query)
 
         import asyncio as _asyncio
 
@@ -178,8 +182,7 @@ def main(
         if query is None:
             typer.echo("--stream requires a query", err=True)
             raise typer.Exit(code=2)
-        if not session.initial_query:
-            session.initial_query = query
+        session.queries.append(query)
         exit_code = _asyncio.run(
             _run_stream(
                 query=query, history=history, system=system, mode=mode,
@@ -200,8 +203,7 @@ def main(
             typer.echo("no query provided", err=True)
             raise typer.Exit(code=2)
 
-    if not session.initial_query:
-        session.initial_query = query
+    session.queries.append(query)
 
     import asyncio as _asyncio
 
@@ -226,6 +228,7 @@ def main(
         from .research import loop as _loop
         from .research import writer as _writer
 
+        session.queries.append(q)
         bus = EventBus()
 
         async def producer():

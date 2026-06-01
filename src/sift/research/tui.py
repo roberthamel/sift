@@ -152,7 +152,7 @@ async def render_run(
     ) as live:
         async for ev in bus.iterate():
             if ev.type == EventType.PLAN:
-                action_rows.append(("plan", (ev.data.get("plan") or "")[:120]))
+                action_rows.append(("plan", ev.data.get("plan") or ""))
             elif ev.type == EventType.SEARCH:
                 qs = ev.data.get("queries") or []
                 action_rows.append(("search", ", ".join(qs)))

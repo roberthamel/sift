@@ -164,10 +164,17 @@ def save(path: Path, content: str) -> None:
 _FM_RE = re.compile(r"^---\n(.*?)\n---\n", re.DOTALL)
 
 
+def _quote_yaml_scalar(s: str) -> str:
+    if any(c in s for c in '"\':#{}[]|>') or not s:
+        return f'"{s}"'
+    return s
+
+
 def strip_frontmatter(text: str) -> tuple[dict, str]:
     """Parse YAML-like frontmatter from the top of text.
 
     Returns ``(meta_dict, body)`` where body has leading blank lines stripped.
+    Handles scalar values and simple sequence values (``- item`` blocks).
     If no frontmatter block is present, returns ``({}, text)`` unchanged.
     """
     if not text.startswith("---\n"):
@@ -176,28 +183,43 @@ def strip_frontmatter(text: str) -> tuple[dict, str]:
     if not m:
         return {}, text
     meta: dict = {}
-    for line in m.group(1).splitlines():
-        if ":" not in line:
-            continue
-        k, _, v = line.partition(":")
-        k = k.strip()
-        v = v.strip().strip('"').strip("'")
-        try:
-            meta[k] = int(v) if "." not in v else float(v)
-        except ValueError:
-            meta[k] = v
+    lines = m.group(1).splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if ":" in line and not line.startswith(" "):
+            k, _, v = line.partition(":")
+            k = k.strip()
+            v = v.strip().strip('"').strip("'")
+            if not v:
+                # Possibly a sequence — collect following "  - item" lines.
+                items = []
+                while i + 1 < len(lines) and lines[i + 1].startswith("  - "):
+                    i += 1
+                    items.append(lines[i][4:].strip().strip('"').strip("'"))
+                meta[k] = items if items else v
+            else:
+                try:
+                    meta[k] = int(v) if "." not in v else float(v)
+                except ValueError:
+                    meta[k] = v
+        i += 1
     return meta, text[m.end():].lstrip("\n")
 
 
 def make_frontmatter(meta: dict) -> str:
-    """Serialise a flat dict to a YAML frontmatter block (``---\\n...\\n---\\n\\n``)."""
+    """Serialise a flat dict to a YAML frontmatter block (``---\\n...\\n---\\n\\n``).
+
+    Values that are lists are emitted as YAML sequences.
+    """
     lines = ["---"]
     for k, v in meta.items():
-        sv = str(v)
-        # Quote values that contain YAML-special characters
-        if any(c in sv for c in '"\':#{}[]|>') or not sv:
-            sv = f'"{sv}"'
-        lines.append(f"{k}: {sv}")
+        if isinstance(v, list):
+            lines.append(f"{k}:")
+            for item in v:
+                lines.append(f"  - {_quote_yaml_scalar(str(item))}")
+        else:
+            lines.append(f"{k}: {_quote_yaml_scalar(str(v))}")
     lines.append("---")
     lines.append("")  # blank line between frontmatter and body
     return "\n".join(lines) + "\n"

@@ -94,20 +94,28 @@ def test_resolve_path_continuing_with_resolved_path(tmp_path):
 # Frontmatter helpers
 # ---------------------------------------------------------------------------
 
-def test_make_frontmatter_round_trips():
-    meta = {"query": "what is X", "created": "2025-01-01T00:00:00Z", "turns": 3}
+def test_make_frontmatter_scalar_round_trips():
+    meta = {"created": "2025-01-01T00:00:00Z", "turns": 3}
     fm = _persist.make_frontmatter(meta)
     assert fm.startswith("---\n")
-    assert "query: what is X" in fm
     assert "turns: 3" in fm
     parsed, body = _persist.strip_frontmatter(fm + "## Heading\n\nBody.")
-    assert parsed["query"] == "what is X"
     assert parsed["turns"] == 3
     assert body == "## Heading\n\nBody."
 
 
+def test_make_frontmatter_list_round_trips():
+    meta = {"queries": ["what is X", "how does X work"]}
+    fm = _persist.make_frontmatter(meta)
+    assert "queries:" in fm
+    assert "  - what is X" in fm
+    assert "  - how does X work" in fm
+    parsed, _ = _persist.strip_frontmatter(fm + "body")
+    assert parsed["queries"] == ["what is X", "how does X work"]
+
+
 def test_make_frontmatter_quotes_special_chars():
-    fm = _persist.make_frontmatter({"query": "what is X: a guide"})
+    fm = _persist.make_frontmatter({"queries": ["what is X: a guide"]})
     assert '"what is X: a guide"' in fm
 
 
@@ -124,10 +132,17 @@ def test_strip_frontmatter_numeric_turns():
     assert body == "## Doc"
 
 
-def test_strip_frontmatter_quoted_value():
-    text = '---\nquery: "how does X: work"\n---\n\nbody'
+def test_strip_frontmatter_quoted_scalar():
+    text = '---\nkey: "value: with colon"\n---\n\nbody'
     meta, body = _persist.strip_frontmatter(text)
-    assert meta["query"] == "how does X: work"
+    assert meta["key"] == "value: with colon"
+
+
+def test_strip_frontmatter_legacy_query_scalar():
+    """Old documents with query: scalar should still parse."""
+    text = '---\nquery: what is DNS\nturns: 1\n---\n\nbody'
+    meta, _ = _persist.strip_frontmatter(text)
+    assert meta["query"] == "what is DNS"
 
 
 def test_save_creates_dirs_and_file(tmp_path):

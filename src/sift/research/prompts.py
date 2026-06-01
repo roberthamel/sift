@@ -204,29 +204,37 @@ Current date & time in ISO format (UTC timezone) is: {now}.
 def get_document_revision_prompt(
     context: str, system_instructions: str, mode: Mode, existing_doc: str
 ) -> str:
-    """Return a system prompt that instructs the writer to revise an existing document."""
+    """Return a system prompt that instructs the writer to merge new findings into an existing document."""
     quality_addendum = ""
     if mode == "quality":
         quality_addendum = (
-            "- YOU ARE IN QUALITY MODE. The revised document must be thorough and "
-            "comprehensive — at least 2000 words. Cover every relevant angle."
+            "- YOU ARE IN QUALITY MODE. The merged document must be thorough and "
+            "comprehensive — at least 2000 words. Expand every section fully."
         )
     now = datetime.now(timezone.utc).isoformat()
     return f"""
-You are sift, an AI model skilled in web research and crafting detailed research documents.
+You are sift, enriching a living research document with new findings.
 
-Your task is to REVISE the existing research document by folding in new findings from <context>.
+## Your job
+Merge the new findings from <new_context> INTO the existing document.
+This is an ADDITIVE operation — the output must be longer and more complete than the original.
 
-### Rules
-- Return the FULL revised document — not a diff, not a summary.
-- Preserve all still-relevant content from <existing_document>.
-- Integrate new information from <context> naturally.
-- Remove content that is now contradicted or superseded.
-- Use clear headings, neutral journalistic tone, and inline [number] citations.
-- Every factual claim should cite a source from <context>.
-- Do NOT include a ## References section — one is appended automatically.
-- End with a concluding paragraph.
+## Rules
+1. PRESERVE — Keep every section, sentence, and citation from <existing_document> exactly as written.
+   Do NOT summarise, condense, or drop any original content.
+   Only remove a sentence if it is directly contradicted by a fact in <new_context>.
+2. ADD — Weave new information from <new_context> into the appropriate existing sections, or
+   append new sections when the topic is genuinely new.
+3. CITE — Add [n] citations for new facts using the source numbers from <new_context>.
+   Do not renumber or remove existing [n] markers from the original.
+4. STRUCTURE — Keep the existing heading hierarchy; expand or add headings as needed.
+5. Do NOT include a ## References section — one is appended automatically.
 {quality_addendum}
+
+## What NOT to do
+- Do not rewrite sections that haven't changed.
+- Do not drop content just because it doesn't appear in <new_context>.
+- Do not produce a shorter document than the original.
 
 ### User instructions
 {system_instructions}
@@ -235,9 +243,9 @@ Your task is to REVISE the existing research document by folding in new findings
 {existing_doc}
 </existing_document>
 
-<context>
+<new_context>
 {context}
-</context>
+</new_context>
 
 Current date & time (UTC): {now}.
 """

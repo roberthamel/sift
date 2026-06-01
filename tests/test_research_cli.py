@@ -130,7 +130,8 @@ def test_research_auto_save_includes_frontmatter(monkeypatch, tmp_path):
 
     content = real_saved.get("content", "")
     assert content.startswith("---\n"), "file should start with frontmatter"
-    assert "query:" in content
+    assert "queries:" in content
+    assert "what is X" in content
     assert "created:" in content
     assert "updated:" in content
     assert "turns: 1" in content
@@ -197,7 +198,7 @@ def test_research_continue_preloads_document(monkeypatch, tmp_path):
 
     res = runner.invoke(cli.app, ["--continue", str(doc_file), "follow-up question"])
     assert res.exit_code == 0, res.output
-    # document context should be passed to loop.run
+    # loop.run receives the body (frontmatter stripped); the file has no frontmatter here
     assert captured["document"] == "## Prior Research\n\nSome findings."
 
 
