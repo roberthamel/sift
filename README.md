@@ -14,39 +14,22 @@ in-process: plan → search (via SearXNG) → embed-rank → scrape (via crawl4a
 From a public repo:
 
 ```sh
-uv tool install git+https://<your-public-repo-url>
+uv tool install git+https://github.com/roberthamel/sift
 ```
 
-From a local checkout (the supported path while `searxng` and `crawl4ai`
-are pinned as sibling editable sources):
-
-```sh
-cd sift
-./install.sh                       # → ~/.local/bin/sift (default)
-./install.sh ~/bin/sift             # or a custom target
-```
-
-`install.sh` runs `uv sync` to build the project venv and drops a thin
-wrapper on your PATH that delegates to `uv run --project <repo>`. Edits to
-`src/sift/*.py` take effect on the next invocation — no reinstall step.
-
-If you'd rather not install on PATH, you can always invoke through uv:
-
-```sh
-cd sift && uv sync
-uv run sift --help
-```
-
-`uv tool install -e .` is **not** recommended for this stack: it doesn't
-honor the project's `[tool.uv].override-dependencies` or
-`[tool.uv.extra-build-dependencies]`, both of which are load-bearing here.
-
-For a hermetic dev loop without installing on PATH:
+From a local checkout:
 
 ```sh
 cd sift
 uv sync
-uv run sift --help
+uv run sift --help   # hermetic dev loop, no install needed
+```
+
+Or install on PATH via the wrapper script:
+
+```sh
+./install.sh         # → ~/.local/bin/sift
+./install.sh ~/bin/sift
 ```
 
 ## Usage

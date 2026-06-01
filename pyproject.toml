@@ -30,10 +30,6 @@ build-backend = "uv_build"
 # so we force the searxng-required version across the workspace.
 override-dependencies = ["lxml==6.1.1"]
 
-[tool.uv.sources]
-searxng = { path = "../searxng", editable = true }
-crawl4ai = { path = "../crawl4ai", editable = true }
-
 [tool.uv.extra-build-dependencies]
 searxng = [
     "msgspec",
