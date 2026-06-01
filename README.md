@@ -11,25 +11,20 @@ in-process: plan → search (via SearXNG) → embed-rank → scrape (via crawl4a
 
 ## Install
 
-From a public repo:
-
 ```sh
-uv tool install git+https://github.com/roberthamel/sift
+curl -LsSf https://raw.githubusercontent.com/roberthamel/sift/main/install.sh | sh
 ```
 
-From a local checkout:
+Checks for [uv](https://astral.sh/uv), installs it if missing, then runs
+`uv tool install`. Installs `sift` into `~/.local/bin` (or wherever
+`uv tool` puts binaries on your system).
+
+**Manual / local checkout:**
 
 ```sh
 cd sift
 uv sync
-uv run sift --help   # hermetic dev loop, no install needed
-```
-
-Or install on PATH via the wrapper script:
-
-```sh
-./install.sh         # → ~/.local/bin/sift
-./install.sh ~/bin/sift
+uv run sift --help   # no install needed, runs from the checkout
 ```
 
 ## Usage

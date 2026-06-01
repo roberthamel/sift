@@ -1,42 +1,42 @@
 #!/usr/bin/env bash
-# Install sift as a thin wrapper on PATH that delegates to `uv run`
-# from this checkout. Editable by construction — edits in src/ take
-# effect on the next invocation.
-#
+# sift installer
 # Usage:
-#   ./install.sh                 # installs to $HOME/.local/bin/sift
-#   ./install.sh ~/bin/sift      # custom target path
+#   curl -LsSf https://raw.githubusercontent.com/roberthamel/sift/main/install.sh | sh
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TARGET="${1:-$HOME/.local/bin/sift}"
-MIN_UV="0.11.3"
+REPO="https://github.com/roberthamel/sift"
 
-if ! command -v uv >/dev/null 2>&1; then
-  echo "error: uv not found on PATH. Install it from https://astral.sh/uv" >&2
-  exit 1
+info() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
+ok()   { printf '\033[1;32m  ✓\033[0m %s\n' "$*"; }
+die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+
+# ── uv ───────────────────────────────────────────────────────────────────────
+
+if command -v uv >/dev/null 2>&1; then
+  ok "uv found: $(uv --version)"
+else
+  info "uv not found — installing"
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+  command -v uv >/dev/null 2>&1 || \
+    die "uv installed but not on PATH — open a new shell and re-run"
+  ok "uv installed: $(uv --version)"
 fi
 
-uv_version="$(uv --version | awk '{print $2}')"
-if [ "$(printf '%s\n%s\n' "$MIN_UV" "$uv_version" | sort -V | head -n1)" != "$MIN_UV" ]; then
-  echo "error: uv $uv_version is older than required $MIN_UV. Run: uv self update" >&2
-  exit 1
-fi
+# ── sift ─────────────────────────────────────────────────────────────────────
 
-echo "==> uv sync ($REPO_DIR)"
-( cd "$REPO_DIR" && uv sync )
+info "installing sift"
+uv tool install "git+$REPO"
 
-mkdir -p "$(dirname "$TARGET")"
-echo "==> writing wrapper to $TARGET"
-cat > "$TARGET" <<EOF
-#!/usr/bin/env bash
-exec uv run --project "$REPO_DIR" sift "\$@"
-EOF
-chmod +x "$TARGET"
+# ── PATH hint ────────────────────────────────────────────────────────────────
 
+TOOL_BIN="$(uv tool dir --bin 2>/dev/null || echo "$HOME/.local/bin")"
 case ":$PATH:" in
-  *":$(dirname "$TARGET"):"*) ;;
-  *) echo "note: $(dirname "$TARGET") is not on PATH — add it to your shell rc to invoke 'sift' directly." ;;
+  *":$TOOL_BIN:"*) ;;
+  *)
+    printf '\n\033[1;33mnote:\033[0m add %s to your PATH:\n' "$TOOL_BIN"
+    printf '  echo '\''export PATH="%s:$PATH"'\'' >> ~/.zshrc\n\n' "$TOOL_BIN"
+    ;;
 esac
 
-echo "==> done. Try: $TARGET --help"
+info "done — try: sift --help"
