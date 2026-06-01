@@ -179,4 +179,4 @@ handler. The default location follows the XDG Base Directory spec:
 
 ## License
 
-AGPL-3.0-or-later (matches upstream SearXNG).
+AGPL-3.0-or-later — see [LICENSE](LICENSE). Matches upstream SearXNG.

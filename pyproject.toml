@@ -3,6 +3,7 @@ name = "sift"
 version = "0.1.0"
 description = "In-process research CLI: SearXNG search + crawl4ai page-read + LLM synthesis."
 readme = "README.md"
+license = { text = "AGPL-3.0-or-later" }
 authors = [
     { name = "Robert Hamel", email = "roberthamel@users.noreply.github.com" }
 ]
