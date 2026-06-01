@@ -155,3 +155,49 @@ def save(path: Path, content: str) -> None:
     """Write content to path, creating parent directories as needed."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
+
+
+# ---------------------------------------------------------------------------
+# Frontmatter helpers
+# ---------------------------------------------------------------------------
+
+_FM_RE = re.compile(r"^---\n(.*?)\n---\n", re.DOTALL)
+
+
+def strip_frontmatter(text: str) -> tuple[dict, str]:
+    """Parse YAML-like frontmatter from the top of text.
+
+    Returns ``(meta_dict, body)`` where body has leading blank lines stripped.
+    If no frontmatter block is present, returns ``({}, text)`` unchanged.
+    """
+    if not text.startswith("---\n"):
+        return {}, text
+    m = _FM_RE.match(text)
+    if not m:
+        return {}, text
+    meta: dict = {}
+    for line in m.group(1).splitlines():
+        if ":" not in line:
+            continue
+        k, _, v = line.partition(":")
+        k = k.strip()
+        v = v.strip().strip('"').strip("'")
+        try:
+            meta[k] = int(v) if "." not in v else float(v)
+        except ValueError:
+            meta[k] = v
+    return meta, text[m.end():].lstrip("\n")
+
+
+def make_frontmatter(meta: dict) -> str:
+    """Serialise a flat dict to a YAML frontmatter block (``---\\n...\\n---\\n\\n``)."""
+    lines = ["---"]
+    for k, v in meta.items():
+        sv = str(v)
+        # Quote values that contain YAML-special characters
+        if any(c in sv for c in '"\':#{}[]|>') or not sv:
+            sv = f'"{sv}"'
+        lines.append(f"{k}: {sv}")
+    lines.append("---")
+    lines.append("")  # blank line between frontmatter and body
+    return "\n".join(lines) + "\n"

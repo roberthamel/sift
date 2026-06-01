@@ -18,14 +18,42 @@ class _Session:
     """Holds the live path and document content for a research conversation."""
 
     path: Path | None = None
-    document: str | None = None
+    document: str | None = None  # full file content including frontmatter
     continuing: Path | None = None
+    initial_query: str | None = None  # opening question, preserved across turns
+    created: str | None = None        # ISO timestamp of first save
+    turns: int = 0                    # number of completed research turns
+
+    @property
+    def body(self) -> str | None:
+        """Document body with frontmatter stripped — safe to pass to the LLM."""
+        if self.document is None:
+            return None
+        from .research import persist as _persist
+        _, body = _persist.strip_frontmatter(self.document)
+        return body or None
 
     def save(self, content: str) -> None:
+        from datetime import datetime, timezone
         from .research import persist as _persist
 
-        _persist.save(self.path, content)
-        self.document = content
+        # Strip any frontmatter the LLM may have reproduced in its output.
+        _, body = _persist.strip_frontmatter(content)
+
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if not self.created:
+            self.created = now
+        self.turns += 1
+
+        meta = {
+            "query": self.initial_query or "",
+            "created": self.created,
+            "updated": now,
+            "turns": self.turns,
+        }
+        full = _persist.make_frontmatter(meta) + body
+        _persist.save(self.path, full)
+        self.document = full
 
 
 @app.command()
@@ -98,9 +126,15 @@ def main(
         if not cont.exists():
             typer.echo(f"--continue: file not found: {cont}", err=True)
             raise typer.Exit(code=2)
+        from .research import persist as _persist_boot
+        text = cont.read_text()
+        meta, _ = _persist_boot.strip_frontmatter(text)
         session.path = cont
-        session.document = cont.read_text()
+        session.document = text
         session.continuing = cont
+        session.initial_query = meta.get("query") or None
+        session.created = meta.get("created") or None
+        session.turns = int(meta.get("turns", 0))
 
     # --print mode: one turn, no REPL, print answer to stdout.
     if print_:
@@ -110,6 +144,8 @@ def main(
         if query is None:
             # --continue + --print with no query: refresh the document.
             query = "Update and refresh this research document with latest findings."
+        if not session.initial_query:
+            session.initial_query = query
 
         import asyncio as _asyncio
 
@@ -142,6 +178,8 @@ def main(
         if query is None:
             typer.echo("--stream requires a query", err=True)
             raise typer.Exit(code=2)
+        if not session.initial_query:
+            session.initial_query = query
         exit_code = _asyncio.run(
             _run_stream(
                 query=query, history=history, system=system, mode=mode,
@@ -161,6 +199,9 @@ def main(
         if not query:
             typer.echo("no query provided", err=True)
             raise typer.Exit(code=2)
+
+    if not session.initial_query:
+        session.initial_query = query
 
     import asyncio as _asyncio
 
@@ -191,12 +232,12 @@ def main(
             result = await _loop.run(
                 query=q, history=session_history, system=system, mode=mode,
                 llm_cfg=llm_cfg, embed_cfg=embed_cfg, bus=bus,
-                runner_kwargs=runner_kwargs, document=session.document,
+                runner_kwargs=runner_kwargs, document=session.body,
             )
             await _writer.write(
                 query=q, history=session_history, system=system,
                 sources=result.sources, mode=mode, llm_cfg=llm_cfg, bus=bus,
-                existing_doc=session.document,
+                existing_doc=session.body,
             )
             bus.close()
 
@@ -229,19 +270,20 @@ async def _run_quiet(
     result = await _loop.run(
         query=query, history=history, system=system, mode=mode,
         llm_cfg=llm_cfg, embed_cfg=embed_cfg, bus=bus, runner_kwargs=runner_kwargs,
-        document=session.document,
+        document=session.body,
     )
     answer = await _writer.write(
         query=query, history=history, system=system,
         sources=result.sources, mode=mode, llm_cfg=llm_cfg, bus=bus,
-        existing_doc=session.document,
+        existing_doc=session.body,
     )
     bus.close()
 
-    full_doc = (answer + _writer.format_references(result.sources, answer)) if answer else ""
-    if full_doc:
-        session.save(full_doc)
-    return full_doc
+    body = (answer + _writer.format_references(result.sources, answer)) if answer else ""
+    if body:
+        session.save(body)
+    # Return only the body for stdout (session.save wraps with frontmatter).
+    return body
 
 
 async def _run_stream(
@@ -275,12 +317,12 @@ async def _run_stream(
     result = await _loop.run(
         query=query, history=history, system=system, mode=mode,
         llm_cfg=llm_cfg, embed_cfg=embed_cfg, bus=bus, runner_kwargs=runner_kwargs,
-        document=session.document,
+        document=session.body,
     )
     await _writer.write(
         query=query, history=history, system=system,
         sources=result.sources, mode=mode, llm_cfg=llm_cfg, bus=bus,
-        existing_doc=session.document,
+        existing_doc=session.body,
     )
     bus.close()
     await stream_task
@@ -313,12 +355,12 @@ async def _run_tui_turn(
         result = await _loop.run(
             query=query, history=history, system=system, mode=mode,
             llm_cfg=llm_cfg, embed_cfg=embed_cfg, bus=bus, runner_kwargs=runner_kwargs,
-            document=session.document,
+            document=session.body,
         )
         await _writer.write(
             query=query, history=history, system=system,
             sources=result.sources, mode=mode, llm_cfg=llm_cfg, bus=bus,
-            existing_doc=session.document,
+            existing_doc=session.body,
         )
         bus.close()
 

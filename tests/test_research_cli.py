@@ -107,6 +107,36 @@ def test_research_query_arg_enters_repl_and_saves(monkeypatch, tmp_path):
     assert SYNTHESIS in (saved.get("content") or "")
 
 
+def test_research_auto_save_includes_frontmatter(monkeypatch, tmp_path):
+    """Saved documents should have YAML frontmatter with query/created/updated/turns."""
+    _env(monkeypatch)
+    _stub_loop_and_writer(monkeypatch)
+
+    real_saved = {}
+
+    async def fake_pick(query, llm_cfg, client=None):
+        return "topic", "my-doc"
+
+    def real_save(path, content):
+        real_saved["path"] = path
+        real_saved["content"] = content
+
+    monkeypatch.setattr(_persist, "pick_location", fake_pick)
+    monkeypatch.setattr(_persist, "save", real_save)
+    monkeypatch.setattr(_tui, "followup_loop", lambda run_turn, session: None)
+
+    res = runner.invoke(cli.app, ["what is X"])
+    assert res.exit_code == 0, res.output
+
+    content = real_saved.get("content", "")
+    assert content.startswith("---\n"), "file should start with frontmatter"
+    assert "query:" in content
+    assert "created:" in content
+    assert "updated:" in content
+    assert "turns: 1" in content
+    assert SYNTHESIS in content
+
+
 def test_research_auto_save_path_printed(monkeypatch, capsys):
     _env(monkeypatch)
     _stub_loop_and_writer(monkeypatch)
