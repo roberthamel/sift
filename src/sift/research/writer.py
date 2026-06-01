@@ -91,18 +91,26 @@ async def write(
     returning a full updated document rather than a fresh answer.
     """
     context = _format_context(sources)
+
+    convo: list[dict[str, Any]]
     if existing_doc is not None:
+        # Revision mode: no chat history — the existing document already encodes
+        # prior turns, and history alongside it causes the model to treat the
+        # request as a chatty follow-up rather than a document merge.
         sys_prompt = _prompts.get_document_revision_prompt(
-            context, system or "", mode, existing_doc
+            context, system or "", mode, existing_doc, query
         )
+        convo = [
+            {"role": "system", "content": sys_prompt},
+            {"role": "user", "content": "Produce the merged document now."},
+        ]
     else:
         sys_prompt = _prompts.get_writer_prompt(context, system or "", mode)
-
-    convo: list[dict[str, Any]] = [{"role": "system", "content": sys_prompt}]
-    if history:
-        for role, text in history[-10:]:
-            convo.append({"role": "user" if role == "human" else "assistant", "content": text})
-    convo.append({"role": "user", "content": query})
+        convo = [{"role": "system", "content": sys_prompt}]
+        if history:
+            for role, text in history[-10:]:
+                convo.append({"role": "user" if role == "human" else "assistant", "content": text})
+        convo.append({"role": "user", "content": query})
 
     if client is None:
         client = _client(llm_cfg)

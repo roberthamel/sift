@@ -202,7 +202,7 @@ Current date & time in ISO format (UTC timezone) is: {now}.
 
 
 def get_document_revision_prompt(
-    context: str, system_instructions: str, mode: Mode, existing_doc: str
+    context: str, system_instructions: str, mode: Mode, existing_doc: str, query: str = ""
 ) -> str:
     """Return a system prompt that instructs the writer to merge new findings into an existing document."""
     quality_addendum = ""
@@ -212,32 +212,28 @@ def get_document_revision_prompt(
             "comprehensive — at least 2000 words. Expand every section fully."
         )
     now = datetime.now(timezone.utc).isoformat()
+    query_line = f"\nNew research question addressed by <new_context>: {query}\n" if query else ""
     return f"""
-You are sift, enriching a living research document with new findings.
-
-## Your job
-Merge the new findings from <new_context> INTO the existing document.
-This is an ADDITIVE operation — the output must be longer and more complete than the original.
+You are sift. Your sole task is to produce ONE merged markdown document.
+{query_line}
+## Task
+Expand <existing_document> by merging in the new findings from <new_context>.
+Output the complete merged document — nothing else, no preamble, no commentary.
 
 ## Rules
-1. PRESERVE — Keep every section, sentence, and citation from <existing_document> exactly as written.
-   Do NOT summarise, condense, or drop any original content.
-   Only remove a sentence if it is directly contradicted by a fact in <new_context>.
-2. ADD — Weave new information from <new_context> into the appropriate existing sections, or
-   append new sections when the topic is genuinely new.
-3. CITE — Add [n] citations for new facts using the source numbers from <new_context>.
-   Do not renumber or remove existing [n] markers from the original.
-4. STRUCTURE — Keep the existing heading hierarchy; expand or add headings as needed.
-5. Do NOT include a ## References section — one is appended automatically.
+1. PRESERVE — Copy every heading, paragraph, and citation from <existing_document> verbatim.
+   The original content must appear in the output. Do NOT summarise, shorten, or rewrite it.
+   Only omit a sentence if it is directly contradicted by a fact in <new_context>.
+2. ADD — Insert new information from <new_context> into the appropriate sections, or append
+   new sections for genuinely new topics.
+3. CITE — Mark new facts with [n] using source numbers from <new_context>.
+   Leave existing [n] markers untouched.
+4. STRUCTURE — Preserve the existing heading hierarchy; add new headings only as needed.
+5. LENGTH — The output must be longer than <existing_document>.
+6. Do NOT include a ## References section — one is appended automatically.
 {quality_addendum}
 
-## What NOT to do
-- Do not rewrite sections that haven't changed.
-- Do not drop content just because it doesn't appear in <new_context>.
-- Do not produce a shorter document than the original.
-
-### User instructions
-{system_instructions}
+{f"### User instructions{chr(10)}{system_instructions}" if system_instructions.strip() else ""}
 
 <existing_document>
 {existing_doc}

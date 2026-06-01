@@ -52,14 +52,14 @@ class _Client:
         self.chat = type("X", (), {"completions": comp})()
 
 
-def test_writer_revision_prompt_receives_existing_doc():
+def test_writer_revision_prompt_receives_existing_doc_and_query():
     sources = [{"url": "http://a/", "title": "A", "content": "new facts"}]
-    comp = _Completions(["Revised content."])
+    comp = _Completions(["Merged content."])
     bus = EventBus()
     asyncio.run(
         writer.write(
-            query="update",
-            history=None,
+            query="are there alternatives?",
+            history=[("human", "tell me about X"), ("assistant", "X is...")],
             system=None,
             sources=sources,
             mode="balanced",
@@ -71,19 +71,28 @@ def test_writer_revision_prompt_receives_existing_doc():
     )
     bus.close()
     sys_msg = comp.last_messages[0]["content"]
+    # Existing doc is in the system prompt
     assert "Old heading" in sys_msg
     assert "Old content" in sys_msg
-    assert "existing_document" in sys_msg or "existing document" in sys_msg.lower()
+    assert "existing_document" in sys_msg
+    # Query is embedded in the system prompt too
+    assert "are there alternatives" in sys_msg
+    # History must NOT appear — revision mode strips it
+    messages = comp.last_messages
+    roles = [m["role"] for m in messages]
+    assert "assistant" not in roles, "history should not be passed in revision mode"
+    # Only system + one user message
+    assert len(messages) == 2
 
 
-def test_writer_first_turn_unchanged_without_existing_doc():
+def test_writer_first_turn_passes_history():
     sources = [{"url": "http://a/", "title": "A", "content": "facts"}]
     comp = _Completions(["Fresh answer."])
     bus = EventBus()
     asyncio.run(
         writer.write(
             query="what is X",
-            history=None,
+            history=[("human", "prior q"), ("assistant", "prior a")],
             system=None,
             sources=sources,
             mode="balanced",
@@ -96,6 +105,9 @@ def test_writer_first_turn_unchanged_without_existing_doc():
     sys_msg = comp.last_messages[0]["content"]
     # Standard writer prompt, not revision prompt
     assert "existing_document" not in sys_msg
+    # History IS present in first-turn mode
+    roles = [m["role"] for m in comp.last_messages]
+    assert "assistant" in roles
 
 
 def test_writer_streams_deltas_and_emits_sources():
