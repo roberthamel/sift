@@ -3,7 +3,7 @@
 ## Install
 
 ```sh
-curl -LsSf https://raw.githubusercontent.com/roberthamel/sift/main/install.sh | sh
+curl -LsSf https://raw.githubusercontent.com/roberthamel/sift/main/install.sh | bash
 ```
 
 Checks for uv, installs it if missing, then runs `uv tool install`.

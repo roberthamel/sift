@@ -12,7 +12,7 @@ in-process: plan → search (via SearXNG) → embed-rank → scrape (via crawl4a
 ## Install
 
 ```sh
-curl -LsSf https://raw.githubusercontent.com/roberthamel/sift/main/install.sh | sh
+curl -LsSf https://raw.githubusercontent.com/roberthamel/sift/main/install.sh | bash
 ```
 
 Checks for [uv](https://astral.sh/uv), installs it if missing, then runs

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # sift installer
 # Usage:
-#   curl -LsSf https://raw.githubusercontent.com/roberthamel/sift/main/install.sh | sh
+#   curl -LsSf https://raw.githubusercontent.com/roberthamel/sift/main/install.sh | bash
 set -euo pipefail
 
 REPO="https://github.com/roberthamel/sift"
@@ -29,7 +29,7 @@ fi
 # ── venv ─────────────────────────────────────────────────────────────────────
 
 info "creating environment at $SIFT_HOME"
-uv venv "$SIFT_HOME"
+uv venv --allow-existing "$SIFT_HOME"
 PYTHON="$SIFT_HOME/bin/python"
 
 # ── searxng ──────────────────────────────────────────────────────────────────
@@ -52,9 +52,12 @@ uv pip install --quiet --python "$PYTHON" \
 # ── sift ─────────────────────────────────────────────────────────────────────
 
 info "installing sift"
+_OVERRIDE=$(mktemp)
+printf 'lxml==6.1.1\n' > "$_OVERRIDE"
 uv pip install --quiet --python "$PYTHON" \
-  --override <(printf 'lxml==6.1.1\n') \
+  --override "$_OVERRIDE" \
   "git+$REPO"
+rm -f "$_OVERRIDE"
 
 # ── PATH / wrapper ───────────────────────────────────────────────────────────
 
