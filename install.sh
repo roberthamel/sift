@@ -26,7 +26,7 @@ fi
 # ── sift ─────────────────────────────────────────────────────────────────────
 
 info "installing sift"
-uv tool install "git+$REPO"
+uv tool install --override "lxml==6.1.1" "git+$REPO"
 
 # ── PATH hint ────────────────────────────────────────────────────────────────
 
