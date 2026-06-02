@@ -5,6 +5,9 @@
 set -euo pipefail
 
 REPO="https://github.com/roberthamel/sift"
+SXNG_REPO="https://github.com/searxng/searxng"
+SIFT_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/sift"
+TOOL_BIN="${HOME}/.local/bin"
 
 info() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m  ✓\033[0m %s\n' "$*"; }
@@ -23,14 +26,42 @@ else
   ok "uv installed: $(uv --version)"
 fi
 
+# ── venv ─────────────────────────────────────────────────────────────────────
+
+info "creating environment at $SIFT_HOME"
+uv venv "$SIFT_HOME"
+PYTHON="$SIFT_HOME/bin/python"
+
+# ── searxng ──────────────────────────────────────────────────────────────────
+# SearXNG is not on PyPI and its setup.py imports at build time, so we must
+# pre-install its build deps and build with --no-build-isolation.
+
+info "installing searxng build dependencies"
+uv pip install --quiet --python "$PYTHON" \
+  msgspec setuptools pyyaml babel \
+  flask "flask-babel" jinja2 \
+  "lxml==6.1.1" pygments "python-dateutil" \
+  "httpx[http2]" "httpx-socks[asyncio]" \
+  markdown-it-py isodate whitenoise certifi
+
+info "installing searxng"
+uv pip install --quiet --python "$PYTHON" \
+  --no-build-isolation \
+  "git+$SXNG_REPO"
+
 # ── sift ─────────────────────────────────────────────────────────────────────
 
 info "installing sift"
-uv tool install --override "lxml==6.1.1" "git+$REPO"
+uv pip install --quiet --python "$PYTHON" \
+  --override <(printf 'lxml==6.1.1\n') \
+  "git+$REPO"
 
-# ── PATH hint ────────────────────────────────────────────────────────────────
+# ── PATH / wrapper ───────────────────────────────────────────────────────────
 
-TOOL_BIN="$(uv tool dir --bin 2>/dev/null || echo "$HOME/.local/bin")"
+mkdir -p "$TOOL_BIN"
+ln -sf "$SIFT_HOME/bin/sift" "$TOOL_BIN/sift"
+ok "linked $TOOL_BIN/sift → $SIFT_HOME/bin/sift"
+
 case ":$PATH:" in
   *":$TOOL_BIN:"*) ;;
   *)
