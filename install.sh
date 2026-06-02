@@ -31,7 +31,7 @@ fi
 PYTHON="$SIFT_HOME/bin/python"
 if [ ! -x "$PYTHON" ]; then
   info "creating environment at $SIFT_HOME"
-  uv venv "$SIFT_HOME"
+  uv venv --clear "$SIFT_HOME"
 else
   ok "environment exists at $SIFT_HOME"
 fi
