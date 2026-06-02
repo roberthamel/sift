@@ -28,9 +28,13 @@ fi
 
 # ── venv ─────────────────────────────────────────────────────────────────────
 
-info "creating environment at $SIFT_HOME"
-uv venv --allow-existing "$SIFT_HOME"
 PYTHON="$SIFT_HOME/bin/python"
+if [ ! -x "$PYTHON" ]; then
+  info "creating environment at $SIFT_HOME"
+  uv venv "$SIFT_HOME"
+else
+  ok "environment exists at $SIFT_HOME"
+fi
 
 # ── searxng ──────────────────────────────────────────────────────────────────
 # SearXNG is not on PyPI and its setup.py imports at build time, so we must
