@@ -4,14 +4,14 @@ Composes a compact action log (top) with a live-updating Markdown view
 (bottom) that re-renders on every `response` delta. After the loop emits
 `done`, exits Live and drops into an in-process REPL for follow-ups.
 """
+
 from __future__ import annotations
 
 import asyncio
-import sys
 import time
 from typing import Any, Awaitable, Callable
 
-from .events import Event, EventBus, EventType
+from .events import EventBus, EventType
 from .writer import format_references
 
 
@@ -197,11 +197,17 @@ async def render_run(
 def followup_loop(
     run_turn: Callable[[str], Awaitable[str]],
     session: Any,
+    *,
+    on_new: Callable[[], str | None] | None = None,
 ) -> None:
     """Synchronous follow-up REPL. Runs until Ctrl-D (EOF).
 
     ``run_turn(q)`` is an async callable that returns the updated document.
     ``session`` must expose a ``.path`` attribute and a ``.save(content)`` method.
+
+    ``on_new``, if provided, is called when the user types ``/new``.  It should
+    reset session state, prompt for a fresh query, and return the query string
+    (or ``None`` to exit the REPL).
 
     Blank lines re-prompt; only EOF (Ctrl-D) exits.
     """
@@ -215,6 +221,26 @@ def followup_loop(
             return
         if not raw:
             continue
+
+        # Check for /new command — exact match or /new followed by whitespace.
+        if raw == "/new" or raw.startswith("/new "):
+            if on_new is not None:
+                q = on_new()
+                if q is None:
+                    return
+                # Run the fresh query as a new research turn.
+                try:
+                    updated_doc = asyncio.run(run_turn(q))
+                except KeyboardInterrupt:
+                    print()
+                    return
+                if updated_doc:
+                    session.save(updated_doc)
+                    print(f"\033[2msaved → {session.path}\033[0m")
+            else:
+                print("/new: no reset handler available")
+            continue
+
         try:
             updated_doc = asyncio.run(run_turn(raw))
         except KeyboardInterrupt:

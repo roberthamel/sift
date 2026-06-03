@@ -9,7 +9,6 @@ from __future__ import annotations
 import subprocess
 import sys
 import textwrap
-from pathlib import Path
 
 
 SETTINGS_YAML = textwrap.dedent(

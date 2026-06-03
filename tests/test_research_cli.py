@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 from typer.testing import CliRunner
 
 from sift import cli
@@ -12,7 +10,7 @@ from sift.research import loop as _loop
 from sift.research import writer as _writer
 from sift.research import tui as _tui
 from sift.research import persist as _persist
-from sift.research.events import Event, EventBus, EventType
+from sift.research.events import Event, EventType
 from sift.research.loop import ResearcherResult
 
 
@@ -27,9 +25,27 @@ SOURCES = [
 
 def _stub_loop_and_writer(monkeypatch, *, synthesis=SYNTHESIS, sources=None):
     sources = sources or SOURCES
-    captured = {"history": None, "system": None, "query": None, "existing_doc": None, "document": None}
+    captured = {
+        "history": None,
+        "system": None,
+        "query": None,
+        "existing_doc": None,
+        "document": None,
+    }
 
-    async def fake_run(*, query, history, system, mode, llm_cfg, embed_cfg, bus, runner_kwargs=None, client=None, document=None):
+    async def fake_run(
+        *,
+        query,
+        history,
+        system,
+        mode,
+        llm_cfg,
+        embed_cfg,
+        bus,
+        runner_kwargs=None,
+        client=None,
+        document=None,
+    ):
         captured["history"] = list(history) if history else []
         captured["system"] = system
         captured["query"] = query
@@ -38,11 +54,29 @@ def _stub_loop_and_writer(monkeypatch, *, synthesis=SYNTHESIS, sources=None):
         bus.emit(Event(EventType.PLAN, {"plan": "x"}))
         bus.emit(Event(EventType.SEARCH, {"queries": ["q1"]}))
         bus.emit(Event(EventType.SEARCH_RESULTS, {"count": len(sources)}))
-        return ResearcherResult(actions=[], sources=list(sources), usage={"prompt": 1, "completion": 2, "total": 3})
+        return ResearcherResult(
+            actions=[],
+            sources=list(sources),
+            usage={"prompt": 1, "completion": 2, "total": 3},
+        )
 
-    async def fake_write(*, query, history, system, sources, mode, llm_cfg, bus, client=None, existing_doc=None):
+    async def fake_write(
+        *,
+        query,
+        history,
+        system,
+        sources,
+        mode,
+        llm_cfg,
+        bus,
+        client=None,
+        existing_doc=None,
+    ):
         captured["existing_doc"] = existing_doc
-        for piece in [synthesis[: len(synthesis) // 2], synthesis[len(synthesis) // 2 :]]:
+        for piece in [
+            synthesis[: len(synthesis) // 2],
+            synthesis[len(synthesis) // 2 :],
+        ]:
             bus.emit(Event(EventType.RESPONSE, {"delta": piece}))
         bus.emit(Event(EventType.SOURCES, {"sources": list(sources)}))
         bus.emit(Event(EventType.DONE, {"finished": True}))
@@ -86,6 +120,7 @@ def _env(monkeypatch):
 # Basic REPL / TUI mode
 # ---------------------------------------------------------------------------
 
+
 def test_research_oneshot_tui(monkeypatch):
     _env(monkeypatch)
     _stub_loop_and_writer(monkeypatch)
@@ -99,7 +134,7 @@ def test_research_query_arg_enters_repl_and_saves(monkeypatch, tmp_path):
     _stub_loop_and_writer(monkeypatch)
     saved = _stub_persist(monkeypatch)
     # followup_loop is called after first turn; stub it to do nothing
-    monkeypatch.setattr(_tui, "followup_loop", lambda run_turn, session: None)
+    monkeypatch.setattr(_tui, "followup_loop", lambda run_turn, session, **kwargs: None)
     res = runner.invoke(cli.app, ["what is X"])
     assert res.exit_code == 0, res.output
     # Auto-save should have happened
@@ -123,7 +158,7 @@ def test_research_auto_save_includes_frontmatter(monkeypatch, tmp_path):
 
     monkeypatch.setattr(_persist, "pick_location", fake_pick)
     monkeypatch.setattr(_persist, "save", real_save)
-    monkeypatch.setattr(_tui, "followup_loop", lambda run_turn, session: None)
+    monkeypatch.setattr(_tui, "followup_loop", lambda run_turn, session, **kwargs: None)
 
     res = runner.invoke(cli.app, ["what is X"])
     assert res.exit_code == 0, res.output
@@ -142,7 +177,7 @@ def test_research_auto_save_path_printed(monkeypatch, capsys):
     _env(monkeypatch)
     _stub_loop_and_writer(monkeypatch)
     _stub_persist(monkeypatch, scope="topic", slug="my-doc")
-    monkeypatch.setattr(_tui, "followup_loop", lambda run_turn, session: None)
+    monkeypatch.setattr(_tui, "followup_loop", lambda run_turn, session, **kwargs: None)
     res = runner.invoke(cli.app, ["what is X"])
     assert res.exit_code == 0
     assert "saved" in res.output
@@ -159,6 +194,7 @@ def test_research_no_output_flag(monkeypatch):
 # --print mode
 # ---------------------------------------------------------------------------
 
+
 def test_research_print_mode_one_shot(monkeypatch):
     _env(monkeypatch)
     _stub_loop_and_writer(monkeypatch)
@@ -172,7 +208,10 @@ def test_research_print_without_query_exits_2(monkeypatch):
     _env(monkeypatch)
     res = runner.invoke(cli.app, ["--print"])
     assert res.exit_code == 2
-    assert "query" in (res.stderr or res.output).lower() or "continue" in (res.stderr or res.output).lower()
+    assert (
+        "query" in (res.stderr or res.output).lower()
+        or "continue" in (res.stderr or res.output).lower()
+    )
 
 
 def test_research_print_no_synthesis_exit_nonzero(monkeypatch):
@@ -187,11 +226,12 @@ def test_research_print_no_synthesis_exit_nonzero(monkeypatch):
 # --continue mode
 # ---------------------------------------------------------------------------
 
+
 def test_research_continue_preloads_document(monkeypatch, tmp_path):
     _env(monkeypatch)
     captured = _stub_loop_and_writer(monkeypatch)
     _stub_persist(monkeypatch)
-    monkeypatch.setattr(_tui, "followup_loop", lambda run_turn, session: None)
+    monkeypatch.setattr(_tui, "followup_loop", lambda run_turn, session, **kwargs: None)
 
     doc_file = tmp_path / "existing.md"
     doc_file.write_text("## Prior Research\n\nSome findings.")
@@ -216,7 +256,7 @@ def test_research_continue_writes_back_same_file(monkeypatch, tmp_path):
 
     monkeypatch.setattr(_persist, "pick_location", fake_pick)
     monkeypatch.setattr(_persist, "save", fake_save)
-    monkeypatch.setattr(_tui, "followup_loop", lambda run_turn, session: None)
+    monkeypatch.setattr(_tui, "followup_loop", lambda run_turn, session, **kwargs: None)
 
     doc_file = tmp_path / "existing.md"
     doc_file.write_text("old content")
@@ -249,6 +289,7 @@ def test_research_print_continue_no_query_allowed(monkeypatch, tmp_path):
 # --stream mode
 # ---------------------------------------------------------------------------
 
+
 def test_research_stream_ndjson(monkeypatch):
     _env(monkeypatch)
     _stub_loop_and_writer(monkeypatch)
@@ -270,6 +311,7 @@ def test_research_stream_without_query_exits_2(monkeypatch):
 # ---------------------------------------------------------------------------
 # Other existing tests
 # ---------------------------------------------------------------------------
+
 
 def test_research_tui_flag_rejected(monkeypatch):
     _env(monkeypatch)
@@ -300,7 +342,7 @@ def test_research_history_file_and_system(monkeypatch, tmp_path: Path):
     _env(monkeypatch)
     captured = _stub_loop_and_writer(monkeypatch)
     _stub_persist(monkeypatch)
-    monkeypatch.setattr(_tui, "followup_loop", lambda run_turn, session: None)
+    monkeypatch.setattr(_tui, "followup_loop", lambda run_turn, session, **kwargs: None)
     hist_path = tmp_path / "h.json"
     hist_path.write_text(json.dumps([["human", "prior q"], ["assistant", "prior a"]]))
     res = runner.invoke(
@@ -337,7 +379,11 @@ def test_research_repl_continues_after_empty_synthesis(monkeypatch):
     _stub_loop_and_writer(monkeypatch, synthesis="")
     _stub_persist(monkeypatch)
     loop_entered = []
-    monkeypatch.setattr(_tui, "followup_loop", lambda run_turn, session: loop_entered.append(True))
+    monkeypatch.setattr(
+        _tui,
+        "followup_loop",
+        lambda run_turn, session, **kwargs: loop_entered.append(True),
+    )
     res = runner.invoke(cli.app, ["q"])
     assert res.exit_code == 0
     assert loop_entered, "followup_loop was not called"

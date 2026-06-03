@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 
-import pytest
 
 from sift.research import persist as _persist
 from sift.llm_config import LLMConfig

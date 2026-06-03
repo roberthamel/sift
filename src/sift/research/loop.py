@@ -19,7 +19,7 @@ from typing import Any
 
 from . import actions as _actions
 from . import prompts as _prompts
-from .actions import ActionContext, ActionOutput
+from .actions import ActionContext
 from .events import Event, EventBus, EventType
 from .embed_config import EmbedConfig
 from ..llm_config import LLMConfig

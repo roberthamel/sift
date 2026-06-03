@@ -5,7 +5,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import openai
-import pytest
 
 from sift import llm
 from sift.llm_config import LLMConfig

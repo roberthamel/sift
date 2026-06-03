@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import math
 
-import pytest
 
 from sift.research import actions, embeddings
 from sift.research.embed_config import EmbedConfig

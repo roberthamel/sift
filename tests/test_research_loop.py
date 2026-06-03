@@ -3,9 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass
-from typing import Any
 
-import pytest
 
 from sift.research import actions as _actions
 from sift.research import loop as _loop

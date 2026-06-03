@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from unittest.mock import patch
 
 from typer.testing import CliRunner
 
@@ -11,8 +9,7 @@ from sift import cli
 from sift.research import loop as _loop
 from sift.research import persist as _persist
 from sift.research import writer as _writer
-from sift.research import tui as _tui
-from sift.research.events import Event, EventBus, EventType
+from sift.research.events import Event, EventType
 from sift.research.loop import ResearcherResult
 
 
