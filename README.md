@@ -1,7 +1,7 @@
 # sift
 
 A command-line research tool that runs a **Vane-style multi-step research loop** entirely
-in-process: plan → search (via SearXNG) → embed-rank → scrape (via crawl4ai) → synthesize.
+in-process: plan → search (via SearXNG) → embed-rank → (optionally scrape via crawl4ai) → synthesize.
 
 - No Flask server, no port bound, no Redis, no multi-user state.
 - Bundled minimal `settings.yml` with the default-enabled engines.
@@ -51,6 +51,16 @@ sift --continue .ai/research/golang/viper-config-library.md "how does it handle 
 sift --stream "what is HTTP/3"
 ```
 
+### Follow-up REPL
+
+After the first turn, `sift` drops into a follow-up prompt (`>`).
+
+- Type a **follow-up question** to run another research turn — new findings are
+  **merged** into the existing document.
+- Type **`/new`** to reset the session and start a fresh research document.
+- Press **Ctrl-D** (EOF) to exit.
+- A blank line re-prompts (does not exit).
+
 ### Auto-save and document lifecycle
 
 Each turn's synthesized answer is written to `.ai/research/<scope>/<filename>.md`.
@@ -96,15 +106,22 @@ into the existing text). The same file is updated in place.
 | `--embed-base-url URL` | — | `SIFT_EMBED_BASE_URL` | Embedding endpoint |
 | `--embed-api-key KEY` | — | `SIFT_EMBED_API_KEY` | — |
 | `--embed-model NAME` | — | `SIFT_EMBED_MODEL` | Embedding model |
-| `--system STR` | (none) | — | System instructions for the writer |
+| `--system STR` | (none) | — | System instructions injected into the writer prompt |
 | `--history-file PATH` | (none) | — | JSON file `[[role, text], ...]` |
 | `--lang all` | `all` | — | BCP-47-ish; `all`/`auto` accepted |
 | `--safesearch 0` | `0` | — | `0`, `1`, `2` |
 | `--allow DOMAIN` | (none) | — | Repeatable; keep URLs whose host ends in this suffix |
 | `--block DOMAIN` | (none) | — | Repeatable; drop URLs whose host ends in this suffix |
-| `--settings PATH` | bundled `data/settings.yml` | — | Overrides `$SEARXNG_SETTINGS_PATH` |
+| `--settings PATH` | bundled `data/settings.yml` | `SEARXNG_SETTINGS_PATH` | Override SearXNG settings file |
 | `--log-file PATH` | `$XDG_STATE_HOME/sift/sift.log` | — | Rotated, 1 MB × 3 |
 | `--verbose` | off | — | Raises file log level to DEBUG |
+
+### Timeout env vars
+
+| Variable | Default | Applies to |
+| --- | --- | --- |
+| `SIFT_LLM_TIMEOUT` | `3600` (1 hour) | LLM API calls (research loop, writer) |
+| `SIFT_EMBED_TIMEOUT` | `600` (10 min) | Embedding API calls |
 
 ### Research modes
 
@@ -116,11 +133,25 @@ into the existing text). The same file is updated in place.
 
 ### NDJSON events (`--stream`)
 
-One JSON object per line: `{"type": "plan"|"search"|"search_results"|"reading"|"extracted"|"response"|"sources"|"done"|"error", "data": {...}}`
+One JSON object per line. Full list of event types:
 
-`response` events carry `{"delta": "..."}` chunks that concatenate to the full
-synthesis. `sources` carries the ranked source list. `--stream` is composable
-with `--print` for non-interactive scripted use.
+| Type | `data` fields | Notes |
+| --- | --- | --- |
+| `init` | `{"query": "...", "mode": "...", "max_iter": N}` | First event emitted |
+| `plan` | `{"plan": "..."}` | LLM's research plan (full text) |
+| `search` | `{"queries": ["q1", "q2"]}` | Search queries issued |
+| `search_query` | `{"query": "...", "status": "running"|"done"|"failed"}` | Per-query progress |
+| `search_results` | `{"count": N}` | Results returned |
+| `reading` | `{"urls": ["..."]}` | URLs being scraped |
+| `fetch_url` | `{"url": "...", "status": "fetching"|"done"|"failed"}` | Per-URL fetch progress |
+| `extracted` | `{"url": "..."}` | URL content extracted |
+| `iter_progress` | `{"iter": N, "max_iter": N}` | Loop iteration progress |
+| `response` | `{"delta": "..."}` | Streaming answer chunk — concatenate for full synthesis |
+| `sources` | `{"sources": [...]}` | Ranked source list (URL, title, content, similarity) |
+| `done` | `{"finished": true}` | Research loop complete |
+| `error` | `{"message": "...", ...}` | Non-fatal error |
+
+`--stream` is composable with `--print` for non-interactive scripted use.
 
 ## Domain filters
 
@@ -154,6 +185,16 @@ handler. The default location follows the XDG Base Directory spec:
 - **Not multi-user.** No request context, no preferences, no plugin storage.
 - **Not a SearXNG fork.** Pins `searxng` as a dependency; if upstream
   renames an engine or changes the result-container API, update the pin.
+
+## Testing
+
+```sh
+uv run pytest
+```
+
+Tests are in `tests/` and use pytest. The test suite includes unit tests for the
+research loop, writer, actions, embeddings, persistence, TUI, domain filters, and
+CLI help output.
 
 ## License
 
