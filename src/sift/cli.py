@@ -270,12 +270,18 @@ def main(
 
     async def run_turn(q: str) -> str:
         from .research import loop as _loop
+        from .research import persist as _persist
         from .research import writer as _writer
 
         session.queries.append(q)
         bus = EventBus()
 
         async def producer():
+            if session.path is None:
+                scope, slug = await _persist.pick_location(q, llm_cfg)
+                session.path = _persist.resolve_path(
+                    scope, slug, continuing=session.continuing
+                )
             result = await _loop.run(
                 query=q,
                 history=session_history,
