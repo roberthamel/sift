@@ -30,8 +30,11 @@ uv run sift --help   # no install needed, runs from the checkout
 ## Usage
 
 Every research session is automatically saved as a markdown file under
-`.ai/research/<scope>/` in the current directory. The LLM picks a topical
-folder name and filename from the opening question.
+`<base>/<scope>/`, where the base directory defaults to `~/.sift` and is
+configurable via `storage.base_dir` (or `SIFT_STORAGE_BASE_DIR`). The LLM picks
+a topical folder name and filename — first as a best guess from the opening
+question, then refined once the research is done to reflect what was actually
+found.
 
 ```sh
 # Interactive REPL — prompts for the first question, then loops until Ctrl-D
@@ -44,8 +47,8 @@ sift "give me an introduction to Viper in a Golang CLI"
 sift --print "what is HTTP/3"
 
 # Continue an existing research document (preloads it as context)
-sift --continue .ai/research/golang/viper-config-library.md
-sift --continue .ai/research/golang/viper-config-library.md "how does it handle env vars?"
+sift --continue ~/.sift/golang/viper-config-library.md
+sift --continue ~/.sift/golang/viper-config-library.md "how does it handle env vars?"
 
 # Emit NDJSON events for programmatic consumption
 sift --stream "what is HTTP/3"
@@ -63,10 +66,11 @@ After the first turn, `sift` drops into a follow-up prompt (`>`).
 
 ### Auto-save and document lifecycle
 
-Each turn's synthesized answer is written to `.ai/research/<scope>/<filename>.md`.
-The scope and filename are chosen by the LLM from the opening question (e.g.
-`golang/viper-config-library.md`). If the file already exists, a numeric suffix is
-appended (`-2`, `-3`, …) — existing files are never clobbered.
+Each turn's synthesized answer is written to `<base>/<scope>/<filename>.md`
+(base defaults to `~/.sift`). The scope and filename are chosen by the LLM — an
+initial guess from the opening question, then corrected after research based on
+the findings (e.g. `golang/viper-config-library.md`). If the file already exists,
+a numeric suffix is appended (`-2`, `-3`, …) — existing files are never clobbered.
 
 Follow-up turns **merge** new findings into the same file rather than replacing it.
 The document grows and stays coherent across the whole conversation.
@@ -140,8 +144,9 @@ so env vars still override the file.
 | `sift --config <key>=<value>` | Set a value (e.g. `sift --config llm.model=gpt-x`) |
 
 Supported keys: `llm.host`, `llm.api_key`, `llm.model`, `llm.vlm`, `llm.timeout`,
-`embed.base_url`, `embed.api_key`, `embed.model`, `embed.timeout`. API keys are
-masked when displayed.
+`embed.base_url`, `embed.api_key`, `embed.model`, `embed.timeout`,
+`storage.base_dir` (base directory for saved research, default `~/.sift`, env
+`SIFT_STORAGE_BASE_DIR`). API keys are masked when displayed.
 
 ### Research modes
 

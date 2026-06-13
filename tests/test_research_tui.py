@@ -105,7 +105,7 @@ def test_followup_loop_saves_and_prints_path(monkeypatch, capsys):
         return "updated document"
 
     session = MagicMock()
-    session.path = Path(".ai/research/topic/doc.md")
+    session.path = Path("~/.sift/topic/doc.md").expanduser()
 
     _tui.followup_loop(run_turn, session)
 

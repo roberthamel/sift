@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 
 from sift.research import persist as _persist
 from sift.llm_config import LLMConfig
@@ -198,7 +199,7 @@ def test_pick_location_slugifies_llm_output():
     assert slug == "jwt-refresh-flow"
 
 
-def test_pick_location_fallback_on_exception():
+def test_pick_location_raises_on_exception():
     cfg = LLMConfig(host="x", api_key=None, model="m")
 
     class _BrokenCompletions:
@@ -208,17 +209,15 @@ def test_pick_location_fallback_on_exception():
     class _BrokenClient:
         chat = type("X", (), {"completions": _BrokenCompletions()})()
 
-    scope, slug = asyncio.run(_persist.pick_location("What is DNS?", cfg, client=_BrokenClient()))
-    assert scope != ""
-    assert slug != ""
-    assert ".." not in scope and ".." not in slug
+    with pytest.raises(Exception):
+        asyncio.run(_persist.pick_location("What is DNS?", cfg, client=_BrokenClient()))
 
 
-def test_pick_location_fallback_on_bad_json():
+def test_pick_location_raises_on_bad_json():
     cfg = LLMConfig(host="x", api_key=None, model="m")
     client = _FakeClient("not json at all")
-    scope, slug = asyncio.run(_persist.pick_location("test query", cfg, client=client))
-    assert scope and slug
+    with pytest.raises(ValueError):
+        asyncio.run(_persist.pick_location("test query", cfg, client=client))
 
 
 def test_pick_location_rejects_path_traversal_in_llm_output():
@@ -229,3 +228,123 @@ def test_pick_location_rejects_path_traversal_in_llm_output():
     assert ".." not in slug
     assert "/" not in scope
     assert "/" not in slug
+
+
+# ---------------------------------------------------------------------------
+# Persistence tests: <base>/<scope>/<file>.md layout
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_path_base_dir_layout(tmp_path):
+    p = _persist.resolve_path("golang", "viper-config-library", base=tmp_path)
+    assert p == tmp_path / "golang" / "viper-config-library.md"
+
+
+def test_resolve_path_tilde_expansion(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    from sift import config_file as _cf
+    bd = _cf.resolve_base_dir()
+    p = _persist.resolve_path("scope", "file", base=bd)
+    assert p == tmp_path / ".sift" / "scope" / "file.md"
+
+
+def test_resolve_path_parent_creation(tmp_path):
+    p = _persist.resolve_path("new-scope", "new-file", base=tmp_path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    _persist.save(p, "content")
+    assert p.exists()
+    assert p.read_text() == "content"
+
+
+def test_resolve_path_collision_suffix(tmp_path):
+    (tmp_path / "scope").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "scope" / "doc.md").write_text("first")
+    p = _persist.resolve_path("scope", "doc", base=tmp_path)
+    assert p == tmp_path / "scope" / "doc-2.md"
+
+
+def test_resolve_path_continue_in_place(tmp_path):
+    existing = tmp_path / "scope" / "doc.md"
+    existing.parent.mkdir(parents=True, exist_ok=True)
+    existing.write_text("content")
+    p = _persist.resolve_path("scope", "doc", base=tmp_path, continuing=existing)
+    assert p == existing
+
+
+# ---------------------------------------------------------------------------
+# Sanitization tests
+# ---------------------------------------------------------------------------
+
+
+def test_slugify_scope_traversal_stripped():
+    slug = _persist._slugify("../../etc/passwd")
+    assert ".." not in slug
+    assert "/" not in slug
+
+
+def test_slugify_file_charset_stripped():
+    slug = _persist._slugify("my file (copy).md")
+    assert slug == "my-file-copy-md"
+
+
+def test_slugify_length_capped():
+    long_name = "a" * 200
+    slug = _persist._slugify(long_name)
+    assert len(slug) <= _persist._MAX_SLUG_LEN
+
+
+# ---------------------------------------------------------------------------
+# correct_location — Stage-2 correction
+# ---------------------------------------------------------------------------
+
+
+def test_correct_location_returns_corrected_names():
+    cfg = LLMConfig(host="x", api_key=None, model="m")
+    client = _FakeClient('{"scope": "jwt-auth", "filename": "jwt-refresh-flow"}')
+    result = asyncio.run(
+        _persist.correct_location("auth", "tokens", "JWT refresh tokens", cfg, client=client)
+    )
+    assert result == ("jwt-auth", "jwt-refresh-flow")
+
+
+def test_correct_location_returns_none_when_unchanged():
+    cfg = LLMConfig(host="x", api_key=None, model="m")
+    client = _FakeClient('{"scope": "auth", "filename": "tokens"}')
+    result = asyncio.run(
+        _persist.correct_location("auth", "tokens", "some findings", cfg, client=client)
+    )
+    assert result is None
+
+
+def test_correct_location_returns_none_on_bad_json():
+    cfg = LLMConfig(host="x", api_key=None, model="m")
+    client = _FakeClient("not json")
+    result = asyncio.run(
+        _persist.correct_location("auth", "tokens", "findings", cfg, client=client)
+    )
+    assert result is None
+
+
+def test_correct_location_returns_none_on_exception():
+    cfg = LLMConfig(host="x", api_key=None, model="m")
+
+    class _BrokenCompletions:
+        async def create(self, **kwargs):
+            raise RuntimeError("network error")
+
+    class _BrokenClient:
+        chat = type("X", (), {"completions": _BrokenCompletions()})()
+
+    result = asyncio.run(
+        _persist.correct_location("auth", "tokens", "findings", cfg, client=_BrokenClient())
+    )
+    assert result is None
+
+
+def test_correct_location_slugifies_llm_output():
+    cfg = LLMConfig(host="x", api_key=None, model="m")
+    client = _FakeClient('{"scope": "JWT Auth!!", "filename": "JWT Refresh Flow"}')
+    result = asyncio.run(
+        _persist.correct_location("old-scope", "old-file", "findings", cfg, client=client)
+    )
+    assert result == ("jwt-auth", "jwt-refresh-flow")

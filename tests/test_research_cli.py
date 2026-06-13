@@ -100,11 +100,15 @@ def _stub_persist(monkeypatch, *, scope="topic", slug="my-doc"):
     async def fake_pick(query, llm_cfg, client=None):
         return scope, slug
 
+    async def fake_correct(initial_scope, initial_file, sources_summary, llm_cfg, client=None):
+        return None
+
     def fake_save(path, content):
         saved["path"] = path
         saved["content"] = content
 
     monkeypatch.setattr(_persist, "pick_location", fake_pick)
+    monkeypatch.setattr(_persist, "correct_location", fake_correct)
     monkeypatch.setattr(_persist, "save", fake_save)
     return saved
 
@@ -387,3 +391,76 @@ def test_research_repl_continues_after_empty_synthesis(monkeypatch):
     res = runner.invoke(cli.app, ["q"])
     assert res.exit_code == 0
     assert loop_entered, "followup_loop was not called"
+
+
+# ---------------------------------------------------------------------------
+# Stage-2 correction wiring
+# ---------------------------------------------------------------------------
+
+
+def test_research_correction_updates_saved_path(monkeypatch, tmp_path):
+    """When the correction step returns new names, the saved path reflects them."""
+    _env(monkeypatch)
+    monkeypatch.setenv("SIFT_STORAGE_BASE_DIR", str(tmp_path))
+    _stub_loop_and_writer(monkeypatch)
+    saved = {}
+
+    async def fake_pick(query, llm_cfg, client=None):
+        return "guess-scope", "guess-file"
+
+    async def fake_correct(initial_scope, initial_file, sources_summary, llm_cfg, client=None):
+        return "better-scope", "better-file"
+
+    def fake_save(path, content):
+        saved["path"] = path
+        saved["content"] = content
+
+    monkeypatch.setattr(_persist, "pick_location", fake_pick)
+    monkeypatch.setattr(_persist, "correct_location", fake_correct)
+    monkeypatch.setattr(_persist, "save", fake_save)
+
+    res = runner.invoke(cli.app, ["--print", "what is X"])
+    assert res.exit_code == 0, res.output
+    assert saved.get("path") == tmp_path / "better-scope" / "better-file.md"
+
+
+def test_research_correction_declines_keeps_guess(monkeypatch, tmp_path):
+    """When the correction step declines (None), the initial guess path is kept."""
+    _env(monkeypatch)
+    monkeypatch.setenv("SIFT_STORAGE_BASE_DIR", str(tmp_path))
+    _stub_loop_and_writer(monkeypatch)
+    saved = {}
+
+    async def fake_pick(query, llm_cfg, client=None):
+        return "guess-scope", "guess-file"
+
+    async def fake_correct(initial_scope, initial_file, sources_summary, llm_cfg, client=None):
+        return None
+
+    def fake_save(path, content):
+        saved["path"] = path
+        saved["content"] = content
+
+    monkeypatch.setattr(_persist, "pick_location", fake_pick)
+    monkeypatch.setattr(_persist, "correct_location", fake_correct)
+    monkeypatch.setattr(_persist, "save", fake_save)
+
+    res = runner.invoke(cli.app, ["--print", "what is X"])
+    assert res.exit_code == 0, res.output
+    assert saved.get("path") == tmp_path / "guess-scope" / "guess-file.md"
+
+
+def test_research_pick_location_failure_exits_with_readable_error(monkeypatch):
+    """A failed initial location guess exits non-zero with a readable message,
+    never falling back to a query-derived slug."""
+    _env(monkeypatch)
+    _stub_loop_and_writer(monkeypatch)
+
+    async def broken_pick(query, llm_cfg, client=None):
+        raise _persist.LocationError("LLM returned unusable names for the save location")
+
+    monkeypatch.setattr(_persist, "pick_location", broken_pick)
+
+    res = runner.invoke(cli.app, ["--print", "what is X"])
+    assert res.exit_code != 0
+    assert "save location" in (res.stderr or res.output).lower()

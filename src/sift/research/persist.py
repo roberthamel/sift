@@ -1,4 +1,4 @@
-"""Automatic persistence for research documents under .ai/research/<scope>/."""
+"""Automatic persistence for research documents under <base>/<scope>/<file>.md."""
 from __future__ import annotations
 
 import json
@@ -14,6 +14,10 @@ log = logging.getLogger("sift.research")
 _MAX_SLUG_LEN = 60
 
 
+class LocationError(ValueError):
+    """Raised when the initial location guess cannot produce usable names."""
+
+
 def _slugify(s: str) -> str:
     """Convert an arbitrary string to a safe kebab-case slug.
 
@@ -25,34 +29,6 @@ def _slugify(s: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", s)
     s = s.strip("-")
     return s[:_MAX_SLUG_LEN].rstrip("-") or "research"
-
-
-# Common question-framing words that carry no topical information.
-_FILLER = frozenset({
-    "a", "an", "the", "i", "me", "my", "our", "your",
-    "give", "get", "show", "tell", "help", "explain", "describe",
-    "please", "can", "could", "would", "should", "will",
-    "do", "does", "did", "is", "are", "was", "were",
-    "be", "been", "being", "have", "has", "had",
-    "how", "what", "when", "where", "who", "which", "why",
-    "intro", "introduction", "overview", "guide", "tutorial", "summary",
-    "about", "on", "in", "of", "to", "for", "with", "by", "from",
-    "into", "up", "out", "some", "any", "and", "or", "but", "so",
-})
-
-
-def _content_words(query: str) -> list[str]:
-    """Return the substantive words from a query, filtering out filler."""
-    words = re.findall(r"[a-zA-Z0-9]+", query.lower())
-    meaningful = [w for w in words if w not in _FILLER]
-    return meaningful if meaningful else words
-
-
-def _fallback_slug(query: str) -> tuple[str, str]:
-    words = _content_words(query)
-    scope = _slugify(" ".join(words[:2])) or "research"
-    slug = _slugify(" ".join(words[:6])) or "research"
-    return scope, slug
 
 
 _PICK_SYSTEM = """\
@@ -86,9 +62,9 @@ async def pick_location(
 ) -> tuple[str, str]:
     """Ask the LLM to choose a (scope, slug) pair for the research document.
 
-    Returns (scope, slug) where both are safe kebab-case strings. Falls back
-    to a content-word-based slug (filtering question filler) if the LLM call
-    fails.
+    Returns (scope, slug) where both are safe kebab-case strings. Raises
+    ``LocationError`` when the LLM call fails or returns unusable names — there
+    is no query-derived fallback.
     """
     import openai
 
@@ -119,16 +95,85 @@ async def pick_location(
             slug = _slugify(str(data.get("filename", "")))
             if scope and slug:
                 return scope, slug
-    except Exception:  # noqa: BLE001
-        log.debug("pick_location LLM call failed, using content-word fallback", exc_info=True)
+    except Exception as exc:  # noqa: BLE001
+        raise LocationError("could not determine a save location") from exc
+    raise LocationError("LLM returned unusable names for the save location")
 
-    return _fallback_slug(query)
+
+_CORRECT_SYSTEM = """\
+You organise research notes into folders and files. You are given the initial \
+guess for a research document's scope and filename, along with a summary of \
+what was actually researched. If the guess is a good fit, return it unchanged. \
+If the research revealed a better scope or filename, return the improved pair.
+
+Rules:
+- scope: 1-3 words, the broad subject area (e.g. "golang", "auth", "react", "networking")
+- filename: 2-5 words, the specific topic of this research (e.g. "viper-config-library", \
+"jwt-refresh-flow", "react-hooks-patterns")
+- Both in kebab-case, all lowercase.
+- Return ONLY raw JSON, no markdown fences: {"scope": "...", "filename": "..."}
+- If the initial guess is fine, return it as-is.
+"""
+
+
+async def correct_location(
+    initial_scope: str,
+    initial_file: str,
+    sources_summary: str,
+    llm_cfg: "LLMConfig",
+    client=None,
+) -> tuple[str, str] | None:
+    """Stage-2 correction: review findings and optionally refine (scope, file).
+
+    Returns a corrected ``(scope, file)`` pair, or ``None`` when the LLM
+    declines to correct (the initial guess should be kept).
+    """
+    import openai
+
+    if client is None:
+        client = openai.AsyncOpenAI(
+            base_url=llm_cfg.host,
+            api_key=llm_cfg.api_key or "-",
+            timeout=llm_cfg.timeout,
+        )
+
+    user_msg = (
+        f"Initial guess: scope={initial_scope}, filename={initial_file}\n\n"
+        f"Research findings summary:\n{sources_summary}"
+    )
+
+    messages: list[dict] = [
+        {"role": "system", "content": _CORRECT_SYSTEM},
+        {"role": "user", "content": user_msg},
+    ]
+
+    try:
+        resp = await client.chat.completions.create(
+            model=llm_cfg.model,
+            messages=messages,
+            max_tokens=80,
+        )
+        raw = (resp.choices[0].message.content or "").strip()
+        m = re.search(r"\{[^}]+\}", raw, re.DOTALL)
+        if m:
+            data = json.loads(m.group())
+            scope = _slugify(str(data.get("scope", "")))
+            filename = _slugify(str(data.get("filename", "")))
+            if scope and filename:
+                # If unchanged from the guess, treat as "no correction"
+                if scope == initial_scope and filename == initial_file:
+                    return None
+                return scope, filename
+    except Exception:  # noqa: BLE001
+        log.debug("correct_location LLM call failed", exc_info=True)
+    return None
 
 
 def resolve_path(
     scope: str,
     slug: str,
-    base: Path = Path(".ai/research"),
+    *,
+    base: Path,
     continuing: Path | None = None,
 ) -> Path:
     """Build the save path, appending a numeric suffix if the file already exists.

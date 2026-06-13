@@ -164,3 +164,45 @@ def test_embed_resolve_file_fallback():
     assert cfg.host == "http://efile"
     assert cfg.model == "emodel"
     assert cfg.timeout == 42.0
+
+
+# --- storage.base_dir ---
+
+
+def test_storage_base_dir_default():
+    value, source = cf.resolve_value("storage.base_dir")
+    assert value == "~/.sift"
+    assert source == "default"
+
+
+def test_storage_base_dir_file_overrides_default():
+    cf.set("storage.base_dir", "/data/research")
+    value, source = cf.resolve_value("storage.base_dir")
+    assert value == "/data/research"
+    assert source == "file"
+
+
+def test_storage_base_dir_env_overrides_file(monkeypatch):
+    cf.set("storage.base_dir", "/data/research")
+    monkeypatch.setenv("SIFT_STORAGE_BASE_DIR", "/env/research")
+    value, source = cf.resolve_value("storage.base_dir")
+    assert value == "/env/research"
+    assert source == "env"
+
+
+def test_resolve_base_dir_expands_tilde(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    bd = cf.resolve_base_dir()
+    assert bd == tmp_path / ".sift"
+
+
+def test_resolve_base_dir_uses_configured_value(monkeypatch, tmp_path):
+    cf.set("storage.base_dir", str(tmp_path / "custom"))
+    bd = cf.resolve_base_dir()
+    assert bd == tmp_path / "custom"
+
+
+def test_template_includes_storage_base_dir():
+    text = cf.template_text()
+    assert "base_dir:" in text
+    assert "SIFT_STORAGE_BASE_DIR" in text

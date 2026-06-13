@@ -55,6 +55,9 @@ KEYS: dict[str, KeySpec] = {
     "embed.timeout": KeySpec(
         "SIFT_EMBED_TIMEOUT", "Embeddings request timeout in seconds", default="600.0"
     ),
+    "storage.base_dir": KeySpec(
+        "SIFT_STORAGE_BASE_DIR", "Base directory for research documents", default="~/.sift"
+    ),
 }
 
 
@@ -196,6 +199,18 @@ def resolve_value(dotted_key: str) -> tuple[str | None, str]:
     if spec.default is not None:
         return spec.default, "default"
     return None, "unset"
+
+
+def resolve_base_dir() -> Path:
+    """Return the effective research base directory, with ``~`` expanded.
+
+    Resolution follows the standard precedence: CLI flag (not visible here) →
+    environment variable → config file → built-in default (``~/.sift``).
+    """
+    value, _ = resolve_value("storage.base_dir")
+    if value is None:
+        value = "~/.sift"
+    return Path(value).expanduser()
 
 
 def mask(value: str | None) -> str:

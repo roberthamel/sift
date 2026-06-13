@@ -394,15 +394,21 @@ def main(
         from .research import loop as _loop
         from .research import persist as _persist
         from .research import writer as _writer
+        from .research.events import EventBus
+        from . import config_file as _cf
 
         session.queries.append(q)
         bus = EventBus()
+        base_dir = _cf.resolve_base_dir()
+        guessed_scope = None
+        guessed_file = None
 
         async def producer():
+            nonlocal guessed_scope, guessed_file
             if session.path is None:
-                scope, slug = await _persist.pick_location(q, llm_cfg)
+                guessed_scope, guessed_file = await _pick_or_exit(q, llm_cfg)
                 session.path = _persist.resolve_path(
-                    scope, slug, continuing=session.continuing
+                    guessed_scope, guessed_file, base=base_dir, continuing=session.continuing
                 )
             result = await _loop.run(
                 query=q,
@@ -415,6 +421,22 @@ def main(
                 runner_kwargs=runner_kwargs,
                 document=session.body,
             )
+
+            # Stage-2 correction: refine the location based on findings.
+            if session.continuing is None and guessed_scope is not None and result.sources:
+                sources_summary = "\n".join(
+                    f"- {s.get('title', s.get('url', ''))}: {(s.get('content') or '')[:200]}"
+                    for s in result.sources[:10]
+                )
+                corrected = await _persist.correct_location(
+                    guessed_scope, guessed_file, sources_summary, llm_cfg
+                )
+                if corrected is not None:
+                    corr_scope, corr_file = corrected
+                    session.path = _persist.resolve_path(
+                        corr_scope, corr_file, base=base_dir, continuing=session.continuing
+                    )
+
             await _writer.write(
                 query=q,
                 history=session_history,
@@ -463,6 +485,21 @@ def main(
     raise typer.Exit(code=0)
 
 
+async def _pick_or_exit(query, llm_cfg):
+    """Resolve the initial (scope, file) guess, exiting cleanly on failure.
+
+    There is no query-derived fallback: if the LLM cannot pick a location, we
+    surface a readable error and exit rather than guessing from the query text.
+    """
+    from .research import persist as _persist
+
+    try:
+        return await _persist.pick_location(query, llm_cfg)
+    except _persist.LocationError as exc:
+        typer.echo(f"error: could not determine a save location: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+
 async def _run_quiet(
     *,
     query,
@@ -479,12 +516,16 @@ async def _run_quiet(
     from .research import persist as _persist
     from .research import writer as _writer
     from .research.events import EventBus
+    from . import config_file as _cf
 
     bus = EventBus()
+    base_dir = _cf.resolve_base_dir()
 
     if session.path is None:
-        scope, slug = await _persist.pick_location(query, llm_cfg)
-        session.path = _persist.resolve_path(scope, slug, continuing=session.continuing)
+        scope, slug = await _pick_or_exit(query, llm_cfg)
+        session.path = _persist.resolve_path(
+            scope, slug, base=base_dir, continuing=session.continuing
+        )
 
     result = await _loop.run(
         query=query,
@@ -497,6 +538,22 @@ async def _run_quiet(
         runner_kwargs=runner_kwargs,
         document=session.body,
     )
+
+    # Stage-2 correction: refine the location based on what was actually found.
+    if session.continuing is None and result.sources:
+        sources_summary = "\n".join(
+            f"- {s.get('title', s.get('url', ''))}: {(s.get('content') or '')[:200]}"
+            for s in result.sources[:10]
+        )
+        corrected = await _persist.correct_location(
+            scope, slug, sources_summary, llm_cfg
+        )
+        if corrected is not None:
+            corr_scope, corr_file = corrected
+            session.path = _persist.resolve_path(
+                corr_scope, corr_file, base=base_dir, continuing=session.continuing
+            )
+
     answer = await _writer.write(
         query=query,
         history=history,
@@ -533,11 +590,16 @@ async def _run_stream(
     from .research import loop as _loop
     from .research import persist as _persist
     from .research import writer as _writer
-    from .research.events import EventBus, EventType
+    from .research.events import Event, EventBus, EventType
+    from . import config_file as _cf
+
+    base_dir = _cf.resolve_base_dir()
 
     if session.path is None:
-        scope, slug = await _persist.pick_location(query, llm_cfg)
-        session.path = _persist.resolve_path(scope, slug, continuing=session.continuing)
+        scope, slug = await _pick_or_exit(query, llm_cfg)
+        session.path = _persist.resolve_path(
+            scope, slug, base=base_dir, continuing=session.continuing
+        )
 
     bus = EventBus()
     saw_response = False
@@ -571,6 +633,22 @@ async def _run_stream(
         runner_kwargs=runner_kwargs,
         document=session.body,
     )
+
+    # Stage-2 correction: refine the location based on what was actually found.
+    if session.continuing is None and result.sources:
+        sources_summary = "\n".join(
+            f"- {s.get('title', s.get('url', ''))}: {(s.get('content') or '')[:200]}"
+            for s in result.sources[:10]
+        )
+        corrected = await _persist.correct_location(
+            scope, slug, sources_summary, llm_cfg
+        )
+        if corrected is not None:
+            corr_scope, corr_file = corrected
+            session.path = _persist.resolve_path(
+                corr_scope, corr_file, base=base_dir, continuing=session.continuing
+            )
+
     await _writer.write(
         query=query,
         history=history,
@@ -609,14 +687,19 @@ async def _run_tui_turn(
     from .research import tui as _tui
     from .research import writer as _writer
     from .research.events import EventBus
+    from . import config_file as _cf
 
     bus = EventBus()
+    base_dir = _cf.resolve_base_dir()
+    guessed_scope = None
+    guessed_file = None
 
     async def producer():
+        nonlocal guessed_scope, guessed_file
         if session.path is None:
-            scope, slug = await _persist.pick_location(query, llm_cfg)
+            guessed_scope, guessed_file = await _pick_or_exit(query, llm_cfg)
             session.path = _persist.resolve_path(
-                scope, slug, continuing=session.continuing
+                guessed_scope, guessed_file, base=base_dir, continuing=session.continuing
             )
 
         result = await _loop.run(
@@ -630,6 +713,22 @@ async def _run_tui_turn(
             runner_kwargs=runner_kwargs,
             document=session.body,
         )
+
+        # Stage-2 correction: refine the location based on findings.
+        if session.continuing is None and guessed_scope is not None and result.sources:
+            sources_summary = "\n".join(
+                f"- {s.get('title', s.get('url', ''))}: {(s.get('content') or '')[:200]}"
+                for s in result.sources[:10]
+            )
+            corrected = await _persist.correct_location(
+                guessed_scope, guessed_file, sources_summary, llm_cfg
+            )
+            if corrected is not None:
+                corr_scope, corr_file = corrected
+                session.path = _persist.resolve_path(
+                    corr_scope, corr_file, base=base_dir, continuing=session.continuing
+                )
+
         await _writer.write(
             query=query,
             history=history,
