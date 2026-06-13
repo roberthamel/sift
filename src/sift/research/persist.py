@@ -18,6 +18,27 @@ class LocationError(ValueError):
     """Raised when the initial location guess cannot produce usable names."""
 
 
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+_JSON_RE = re.compile(r"\{.*?\}", re.DOTALL)
+
+
+def _extract_json(raw: str) -> dict | None:
+    """Pull a JSON object out of a model response, tolerating reasoning output.
+
+    Reasoning models emit chain-of-thought (often wrapped in ``<think>`` tags)
+    before the answer, and may emit several brace-blocks. Strip the thinking
+    block and parse the last ``{...}`` candidate.
+    """
+    cleaned = _THINK_RE.sub("", raw)
+    matches = _JSON_RE.findall(cleaned)
+    for candidate in reversed(matches):
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
 def _slugify(s: str) -> str:
     """Convert an arbitrary string to a safe kebab-case slug.
 
@@ -85,18 +106,19 @@ async def pick_location(
         resp = await client.chat.completions.create(
             model=llm_cfg.model,
             messages=messages,
-            max_tokens=80,
+            max_tokens=2048,
         )
         raw = (resp.choices[0].message.content or "").strip()
-        m = re.search(r"\{[^}]+\}", raw, re.DOTALL)
-        if m:
-            data = json.loads(m.group())
+        data = _extract_json(raw)
+        if data:
             scope = _slugify(str(data.get("scope", "")))
             slug = _slugify(str(data.get("filename", "")))
             if scope and slug:
                 return scope, slug
     except Exception as exc:  # noqa: BLE001
-        raise LocationError("could not determine a save location") from exc
+        raise LocationError(
+            f"LLM call failed: {type(exc).__name__}: {exc}"
+        ) from exc
     raise LocationError("LLM returned unusable names for the save location")
 
 
@@ -151,12 +173,11 @@ async def correct_location(
         resp = await client.chat.completions.create(
             model=llm_cfg.model,
             messages=messages,
-            max_tokens=80,
+            max_tokens=2048,
         )
         raw = (resp.choices[0].message.content or "").strip()
-        m = re.search(r"\{[^}]+\}", raw, re.DOTALL)
-        if m:
-            data = json.loads(m.group())
+        data = _extract_json(raw)
+        if data:
             scope = _slugify(str(data.get("scope", "")))
             filename = _slugify(str(data.get("filename", "")))
             if scope and filename:

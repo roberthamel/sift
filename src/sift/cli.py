@@ -512,14 +512,27 @@ async def _run_quiet(
     session: _Session,
 ) -> str:
     """Run one research turn without the TUI. Returns the full document."""
+    import asyncio as _asyncio
     from .research import loop as _loop
     from .research import persist as _persist
     from .research import writer as _writer
-    from .research.events import EventBus
+    from .research.events import EventBus, EventType
     from . import config_file as _cf
 
     bus = EventBus()
     base_dir = _cf.resolve_base_dir()
+
+    # Drain the bus to stderr so non-TUI runs show progress instead of a silent
+    # terminal that is indistinguishable from a hang. RESPONSE deltas are noisy
+    # (the streamed answer) so they are summarised, not echoed verbatim.
+    async def _progress():
+        async for ev in bus.iterate():
+            if ev.type == EventType.RESPONSE:
+                continue
+            sys.stderr.write(f"[sift] {ev.type.value}: {str(ev.data)[:160]}\n")
+            sys.stderr.flush()
+
+    progress_task = _asyncio.create_task(_progress())
 
     if session.path is None:
         scope, slug = await _pick_or_exit(query, llm_cfg)
@@ -565,6 +578,7 @@ async def _run_quiet(
         existing_doc=session.body,
     )
     bus.close()
+    await progress_task
 
     body = (
         (answer + _writer.format_references(result.sources, answer)) if answer else ""
