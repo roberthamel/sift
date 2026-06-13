@@ -51,6 +51,26 @@ def test_set_rejects_unknown_key():
         cf.set("bogus.key", "x")
 
 
+def test_unset_removes_key_and_prunes_empty_section():
+    cf.set("llm.model", "m1")
+    cf.set("llm.host", "http://h")
+    cf.unset("llm.model")
+    assert cf.file_get("llm.model") is None
+    assert cf.file_get("llm.host") == "http://h"  # sibling kept
+    cf.unset("llm.host")
+    assert cf.load() == {}  # section pruned once empty
+
+
+def test_unset_absent_key_is_noop():
+    cf.unset("llm.model")  # no file yet
+    assert cf.file_get("llm.model") is None
+
+
+def test_unset_rejects_unknown_key():
+    with pytest.raises(KeyError):
+        cf.unset("bogus.key")
+
+
 def test_load_malformed_raises():
     path = cf.config_path()
     path.parent.mkdir(parents=True, exist_ok=True)

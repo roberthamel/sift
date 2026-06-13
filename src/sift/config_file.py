@@ -152,6 +152,33 @@ def set(dotted_key: str, value: str) -> Path:  # noqa: A001 - mirrors the CLI ve
     return path
 
 
+def unset(dotted_key: str) -> Path:
+    """Remove a single key from the config file, pruning emptied sections.
+
+    A no-op (still returns the path) when the key, section, or file is absent,
+    so ``sift --config llm.model=`` is idempotent. Raises ``KeyError`` for keys
+    not present in :data:`KEYS`.
+    """
+    if dotted_key not in KEYS:
+        raise KeyError(dotted_key)
+    path = config_path()
+    data = _parse(path)  # fresh read, not the cache, so we never lose edits
+    section, _, leaf = dotted_key.partition(".")
+    sub = data.get(section)
+    if isinstance(sub, dict) and leaf in sub:
+        del sub[leaf]
+        if not sub:  # last key in the section → drop the now-empty section
+            del data[section]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            yaml.safe_dump(data, default_flow_style=False, sort_keys=True)
+            if data
+            else ""
+        )
+        _cache.pop(str(path), None)
+    return path
+
+
 def resolve_value(dotted_key: str) -> tuple[str | None, str]:
     """Resolve ``dotted_key`` across env → file → default.
 

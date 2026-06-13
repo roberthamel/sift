@@ -128,3 +128,47 @@ def test_init_requires_config_flag():
     res = runner.invoke(cli.app, ["--init"])
     assert res.exit_code == 2
     assert "--config" in res.output
+
+
+# --- empty value clears a key ---
+
+
+def test_config_set_empty_clears_key():
+    cf.set("llm.model", "gpt-x")
+    cf.set("llm.api_key", "secret")
+    res = runner.invoke(cli.app, ["--config", "llm.model="])
+    assert res.exit_code == 0, res.output
+    assert "cleared llm.model" in res.output
+    assert cf.file_get("llm.model") is None
+    assert cf.file_get("llm.api_key") == "secret"  # sibling preserved
+
+
+def test_config_set_empty_on_absent_key_is_idempotent():
+    res = runner.invoke(cli.app, ["--config", "embed.model="])
+    assert res.exit_code == 0, res.output
+    assert "cleared embed.model" in res.output
+
+
+# --- malformed file surfaces a clean error, not a traceback ---
+
+
+def test_config_show_malformed_file_clean_error():
+    path = cf.config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('llm:\n  model: "unterminated\n')
+    res = runner.invoke(cli.app, ["--config"])
+    assert res.exit_code == 1
+    assert "error: invalid YAML" in res.output
+    assert "Traceback" not in res.output
+    # Clean exit, not an unhandled ConfigFileError bubbling out.
+    assert isinstance(res.exception, SystemExit)
+
+
+def test_config_set_malformed_file_clean_error():
+    path = cf.config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("- not\n- a mapping\n")
+    res = runner.invoke(cli.app, ["--config", "llm.model=x"])
+    assert res.exit_code == 1
+    assert "error:" in res.output and "mapping" in res.output
+    assert "Traceback" not in res.output

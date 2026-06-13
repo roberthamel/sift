@@ -75,7 +75,11 @@ def _run_config(spec: str | None, *, init: bool, edit: bool, force: bool) -> int
         if key not in _cf.KEYS:
             typer.echo(f"unknown config key: {key}", err=True)
             return 2
-        if sep:  # key=value → set
+        if sep:  # key=value → set, key= (empty) → clear
+            if value == "":
+                saved = _cf.unset(key)
+                typer.echo(f"cleared {key} in {saved}")
+                return 0
             saved = _cf.set(key, value)
             typer.echo(f"set {key} in {saved}")
             return 0
@@ -204,13 +208,18 @@ def main(
     ),
 ) -> None:
     """Research the web: plan → search → synthesize."""
+    from . import config_file as _cf
+
     if config or config_init or config_edit:
         if not config:
             typer.echo("--init/--edit require --config", err=True)
             raise typer.Exit(code=2)
-        raise typer.Exit(
-            code=_run_config(query, init=config_init, edit=config_edit, force=force)
-        )
+        try:
+            code = _run_config(query, init=config_init, edit=config_edit, force=force)
+        except _cf.ConfigFileError as exc:
+            typer.echo(f"error: {exc}", err=True)
+            code = 1
+        raise typer.Exit(code=code)
 
     from . import bootstrap as _bootstrap
 
@@ -219,10 +228,14 @@ def main(
     from . import llm_config
     from .research import embed_config as _embed_config
 
-    llm_cfg = llm_config.resolve(host=llm_host, api_key=llm_apikey, model=llm_model)
-    embed_cfg = _embed_config.resolve(
-        host=embed_base_url, api_key=embed_api_key, model=embed_model
-    )
+    try:
+        llm_cfg = llm_config.resolve(host=llm_host, api_key=llm_apikey, model=llm_model)
+        embed_cfg = _embed_config.resolve(
+            host=embed_base_url, api_key=embed_api_key, model=embed_model
+        )
+    except _cf.ConfigFileError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2)
     try:
         llm_cfg.for_llm()
         embed_cfg.for_embed()
