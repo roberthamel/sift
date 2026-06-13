@@ -115,6 +115,7 @@ into the existing text). The same file is updated in place.
 | `--settings PATH` | bundled `data/settings.yml` | `SEARXNG_SETTINGS_PATH` | Override SearXNG settings file |
 | `--log-file PATH` | `$XDG_STATE_HOME/sift/sift.log` | — | Rotated, 1 MB × 3 |
 | `--verbose` | off | — | Raises file log level to DEBUG |
+| `--config` | — | — | Manage the config file (see below) instead of researching |
 
 ### Timeout env vars
 
@@ -122,6 +123,25 @@ into the existing text). The same file is updated in place.
 | --- | --- | --- |
 | `SIFT_LLM_TIMEOUT` | `3600` (1 hour) | LLM API calls (research loop, writer) |
 | `SIFT_EMBED_TIMEOUT` | `600` (10 min) | Embedding API calls |
+
+### Configuration file
+
+Persist settings in `~/.config/sift/config.yaml` (honors `$XDG_CONFIG_HOME`) so
+you don't have to export env vars every session. Values resolve with the
+precedence **CLI flag → environment variable → config file → built-in default**,
+so env vars still override the file.
+
+| Command | Effect |
+| --- | --- |
+| `sift --config` | Show the effective config and where each value came from |
+| `sift --config --init` | Write a commented template and open it in `$EDITOR` (`--force` to overwrite) |
+| `sift --config --edit` | Open the existing config file in `$EDITOR` |
+| `sift --config <key>` | Print the resolved value for a key (e.g. `sift --config llm.model`) |
+| `sift --config <key>=<value>` | Set a value (e.g. `sift --config llm.model=gpt-x`) |
+
+Supported keys: `llm.host`, `llm.api_key`, `llm.model`, `llm.vlm`, `llm.timeout`,
+`embed.base_url`, `embed.api_key`, `embed.model`, `embed.timeout`. API keys are
+masked when displayed.
 
 ### Research modes
 

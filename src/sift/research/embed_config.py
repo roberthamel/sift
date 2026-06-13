@@ -32,25 +32,25 @@ class EmbedConfig:
         return self
 
 
-def _envfloat(name: str, default: float) -> float:
-    v = os.environ.get(name)
-    if v is None:
-        return default
-    try:
-        return float(v.strip().strip("'\""))
-    except ValueError:
-        return default
-
-
 def resolve(
     host: str | None = None,
     api_key: str | None = None,
     model: str | None = None,
     timeout: float | None = None,
 ) -> EmbedConfig:
+    """Resolve config: flag → SIFT_EMBED_* env var → config file → default."""
+    from .. import config_file as _cf
+    from ..llm_config import _resolve_float
+
     return EmbedConfig(
-        host=host or os.environ.get("SIFT_EMBED_BASE_URL"),
-        api_key=api_key or os.environ.get("SIFT_EMBED_API_KEY"),
-        model=model or os.environ.get("SIFT_EMBED_MODEL"),
-        timeout=timeout if timeout is not None else _envfloat("SIFT_EMBED_TIMEOUT", 600.0),
+        host=host or os.environ.get("SIFT_EMBED_BASE_URL") or _cf.file_get("embed.base_url"),
+        api_key=api_key
+        or os.environ.get("SIFT_EMBED_API_KEY")
+        or _cf.file_get("embed.api_key"),
+        model=model or os.environ.get("SIFT_EMBED_MODEL") or _cf.file_get("embed.model"),
+        timeout=(
+            timeout
+            if timeout is not None
+            else _resolve_float("SIFT_EMBED_TIMEOUT", "embed.timeout", 600.0)
+        ),
     )

@@ -14,6 +14,92 @@ app = typer.Typer(no_args_is_help=False, add_completion=False)
 log = logging.getLogger("sift")
 
 
+def _open_in_editor(path: Path) -> bool:
+    """Open *path* in $EDITOR/$VISUAL. Returns False if none is configured."""
+    import os
+    import subprocess
+
+    editor = os.environ.get("EDITOR") or os.environ.get("VISUAL")
+    if not editor:
+        return False
+    subprocess.run([*editor.split(), str(path)], check=False)
+    return True
+
+
+def _run_config(spec: str | None, *, init: bool, edit: bool, force: bool) -> int:
+    """Handle the `--config` family of operations. Returns a process exit code.
+
+    Dispatch on the combination of flags and the optional ``spec`` positional:
+    - ``--init``           → write template, open $EDITOR (``--force`` to overwrite)
+    - ``--edit``           → open existing file in $EDITOR
+    - ``key=value``        → set a value
+    - ``key``              → get the resolved value
+    - (nothing)            → show the effective configuration
+    """
+    from . import config_file as _cf
+
+    path = _cf.config_path()
+
+    if init and edit:
+        typer.echo("--init and --edit are mutually exclusive", err=True)
+        return 2
+
+    if init:
+        if path.exists() and not force:
+            typer.echo(
+                f"config file already exists: {path}\n"
+                "Pass --force to overwrite.",
+                err=True,
+            )
+            return 1
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_cf.template_text())
+        if not _open_in_editor(path):
+            typer.echo(f"wrote {path} ($EDITOR not set — edit it manually)")
+        return 0
+
+    if edit:
+        if not path.exists():
+            typer.echo(
+                f"no config file at {path}\nRun `sift --config --init` first.", err=True
+            )
+            return 1
+        if not _open_in_editor(path):
+            typer.echo(f"$EDITOR not set — config file is at {path}", err=True)
+            return 1
+        return 0
+
+    if spec is not None:
+        key, sep, value = spec.partition("=")
+        key = key.strip()
+        if key not in _cf.KEYS:
+            typer.echo(f"unknown config key: {key}", err=True)
+            return 2
+        if sep:  # key=value → set
+            saved = _cf.set(key, value)
+            typer.echo(f"set {key} in {saved}")
+            return 0
+        # bare key → get resolved value
+        resolved, _ = _cf.resolve_value(key)
+        if resolved is None:
+            return 1
+        typer.echo(resolved)
+        return 0
+
+    # No spec, no flags → show effective configuration.
+    typer.echo(f"config file: {path}{'' if path.exists() else ' (not created)'}")
+    typer.echo("")
+    for key, key_spec in _cf.KEYS.items():
+        value, source = _cf.resolve_value(key)
+        shown = (
+            "(unset)"
+            if value is None
+            else (_cf.mask(value) if key_spec.secret else value)
+        )
+        typer.echo(f"  {key:<16} {shown:<28} [{source}]")
+    return 0
+
+
 @dataclass
 class _Session:
     """Holds the live path and document content for a research conversation."""
@@ -101,8 +187,31 @@ def main(
     log_file: Path | None = typer.Option(None, "--log-file"),
     verbose: bool = typer.Option(False, "--verbose"),
     settings: Path | None = typer.Option(None, "--settings"),
+    config: bool = typer.Option(
+        False,
+        "--config",
+        help="Manage config (~/.config/sift/config.yaml) instead of researching. "
+        "Use with --init, --edit, a bare KEY (get), or KEY=VALUE (set); alone it shows config.",
+    ),
+    config_init: bool = typer.Option(
+        False, "--init", help="With --config: write a template and open $EDITOR."
+    ),
+    config_edit: bool = typer.Option(
+        False, "--edit", help="With --config: open the config file in $EDITOR."
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="With --config --init: overwrite an existing file."
+    ),
 ) -> None:
     """Research the web: plan → search → synthesize."""
+    if config or config_init or config_edit:
+        if not config:
+            typer.echo("--init/--edit require --config", err=True)
+            raise typer.Exit(code=2)
+        raise typer.Exit(
+            code=_run_config(query, init=config_init, edit=config_edit, force=force)
+        )
+
     from . import bootstrap as _bootstrap
 
     _bootstrap.bootstrap(settings_path=settings, log_file=log_file, verbose=verbose)

@@ -11,6 +11,7 @@ DATA = Path(__file__).resolve().parents[1] / "src" / "sift" / "data" / "settings
 def _isolate_state(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.delenv("SEARXNG_SETTINGS_PATH", raising=False)
     yield
 

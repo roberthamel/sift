@@ -44,21 +44,39 @@ class LLMConfig:
         return self
 
 
-def _envflag(name: str) -> bool:
-    v = os.environ.get(name)
-    if v is None:
-        return False
+def _coerce_bool(v: str) -> bool:
     return v.strip().lower() in ("1", "true", "yes", "on")
 
 
-def _envfloat(name: str, default: float) -> float:
-    v = os.environ.get(name)
-    if v is None:
-        return default
+def _coerce_float(v: str, default: float) -> float:
     try:
         return float(v.strip().strip("'\""))
     except ValueError:
         return default
+
+
+def _resolve_flag(env_name: str, file_key: str) -> bool:
+    """Resolve a boolean across env → file → False, env taking precedence."""
+    from . import config_file as _cf
+
+    if env_name in os.environ:
+        return _coerce_bool(os.environ[env_name] or "")
+    fv = _cf.file_get(file_key)
+    if fv is not None:
+        return _coerce_bool(fv)
+    return False
+
+
+def _resolve_float(env_name: str, file_key: str, default: float) -> float:
+    """Resolve a float across env → file → default, env taking precedence."""
+    from . import config_file as _cf
+
+    if env_name in os.environ:
+        return _coerce_float(os.environ[env_name] or "", default)
+    fv = _cf.file_get(file_key)
+    if fv is not None:
+        return _coerce_float(fv, default)
+    return default
 
 
 def resolve(
@@ -68,14 +86,20 @@ def resolve(
     vlm: bool | None = None,
     timeout: float | None = None,
 ) -> LLMConfig:
-    """Resolve config from flags, falling back to SIFT_LLM_* env vars.
+    """Resolve config: flag → SIFT_LLM_* env var → config file → default.
 
     Explicitly passing ``vlm=False`` disables VLM even when the env var is set.
     """
+    from . import config_file as _cf
+
     return LLMConfig(
-        host=host or os.environ.get("SIFT_LLM_HOST"),
-        api_key=api_key or os.environ.get("SIFT_LLM_APIKEY"),
-        model=model or os.environ.get("SIFT_LLM_MODEL"),
-        vlm=vlm if vlm is not None else _envflag("SIFT_VLM"),
-        timeout=timeout if timeout is not None else _envfloat("SIFT_LLM_TIMEOUT", 3600.0),
+        host=host or os.environ.get("SIFT_LLM_HOST") or _cf.file_get("llm.host"),
+        api_key=api_key or os.environ.get("SIFT_LLM_APIKEY") or _cf.file_get("llm.api_key"),
+        model=model or os.environ.get("SIFT_LLM_MODEL") or _cf.file_get("llm.model"),
+        vlm=vlm if vlm is not None else _resolve_flag("SIFT_VLM", "llm.vlm"),
+        timeout=(
+            timeout
+            if timeout is not None
+            else _resolve_float("SIFT_LLM_TIMEOUT", "llm.timeout", 3600.0)
+        ),
     )
