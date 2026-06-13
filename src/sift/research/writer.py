@@ -25,6 +25,19 @@ def _client(cfg: LLMConfig):
 
 
 _CITATION_RE = re.compile(r"\[(\d+)\]")
+_FENCE_RE = re.compile(r"^\s*```", re.MULTILINE)
+
+
+def close_dangling_fence(text: str) -> str:
+    """Append a closing ``` if ``text`` ends with an unterminated code fence.
+
+    A truncated synthesis can leave an open code block; appending the
+    references section into it would render the whole tail as code.
+    """
+    if len(_FENCE_RE.findall(text)) % 2 == 1:
+        sep = "" if text.endswith("\n") else "\n"
+        return text + sep + "```\n"
+    return text
 
 
 def cited_indices(text: str | None) -> set[int]:
@@ -115,19 +128,28 @@ async def write(
         client = _client(llm_cfg)
 
     accumulated = ""
+    finish_reason = None
     try:
         stream = await client.chat.completions.create(
             model=llm_cfg.model, messages=convo, stream=True
         )
         async for chunk in stream:
             try:
-                delta = chunk.choices[0].delta
+                choice = chunk.choices[0]
+                delta = choice.delta
                 piece = getattr(delta, "content", None) or ""
+                finish_reason = getattr(choice, "finish_reason", None) or finish_reason
             except (AttributeError, IndexError):
                 piece = ""
             if piece:
                 accumulated += piece
                 bus.emit(Event(EventType.RESPONSE, {"delta": piece}))
+        if finish_reason == "length":
+            log.warning("writer synthesis truncated (finish_reason=length)")
+            bus.emit(Event(
+                EventType.ERROR,
+                {"stage": "writer", "error": "synthesis truncated by token limit"},
+            ))
     except Exception as exc:  # noqa: BLE001
         log.exception("writer streaming failed; falling back to non-stream")
         bus.emit(Event(EventType.ERROR, {"stage": "writer_stream", "error": str(exc)}))

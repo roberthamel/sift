@@ -581,7 +581,9 @@ async def _run_quiet(
     await progress_task
 
     body = (
-        (answer + _writer.format_references(result.sources, answer)) if answer else ""
+        (_writer.close_dangling_fence(answer) + _writer.format_references(result.sources, answer))
+        if answer
+        else ""
     )
     if body:
         session.save(body)
@@ -677,7 +679,7 @@ async def _run_stream(
     await stream_task
 
     if accumulated:
-        full_doc = accumulated + _writer.format_references(result.sources, accumulated)
+        full_doc = _writer.close_dangling_fence(accumulated) + _writer.format_references(result.sources, accumulated)
         session.save(full_doc)
 
     return 0 if saw_response else 1

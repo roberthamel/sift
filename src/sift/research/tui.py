@@ -12,7 +12,7 @@ import time
 from typing import Any, Awaitable, Callable
 
 from .events import EventBus, EventType
-from .writer import format_references
+from .writer import close_dangling_fence, format_references
 
 
 async def render_run(
@@ -131,7 +131,7 @@ async def render_run(
         # list is filtered to the sources actually cited in the final answer.
         parts: list[str] = []
         if synthesis:
-            parts.append(synthesis)
+            parts.append(close_dangling_fence(synthesis) if show_references else synthesis)
         if show_references and sources:
             refs = format_references(sources, synthesis).strip()
             if refs:
@@ -191,7 +191,7 @@ async def render_run(
         live.update(_render())
     if on_done:
         on_done()
-    return synthesis + format_references(sources, synthesis)
+    return close_dangling_fence(synthesis) + format_references(sources, synthesis)
 
 
 def followup_loop(
