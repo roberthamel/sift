@@ -14,6 +14,29 @@ class ConfigError(ValueError):
     """Raised when required LLM config fields are missing."""
 
 
+def is_fatal_llm_error(exc: BaseException) -> bool:
+    """True for LLM errors that mean the request can never succeed as configured.
+
+    A wrong/unrouted model, bad endpoint, auth failure, or unreachable host can
+    never be retried into success, so callers should fail loudly with a clear
+    message instead of swallowing the error and emitting an empty document.
+    """
+    try:
+        import openai
+    except Exception:  # noqa: BLE001 — openai optional at import time
+        return False
+    return isinstance(
+        exc,
+        (
+            openai.AuthenticationError,
+            openai.PermissionDeniedError,
+            openai.NotFoundError,
+            openai.BadRequestError,
+            openai.APIConnectionError,  # also covers APITimeoutError
+        ),
+    )
+
+
 @dataclass(frozen=True)
 class LLMConfig:
     host: str | None

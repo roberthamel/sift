@@ -405,53 +405,57 @@ def main(
 
         async def producer():
             nonlocal guessed_scope, guessed_file
-            if session.path is None:
-                guessed_scope, guessed_file = await _pick_or_exit(q, llm_cfg)
-                session.path = _persist.resolve_path(
-                    guessed_scope, guessed_file, base=base_dir, continuing=session.continuing
-                )
-            result = await _loop.run(
-                query=q,
-                history=session_history,
-                system=system,
-                mode=mode,
-                llm_cfg=llm_cfg,
-                embed_cfg=embed_cfg,
-                bus=bus,
-                runner_kwargs=runner_kwargs,
-                document=session.body,
-            )
-
-            # Stage-2 correction: refine the location based on findings.
-            if session.continuing is None and guessed_scope is not None and result.sources:
-                sources_summary = "\n".join(
-                    f"- {s.get('title', s.get('url', ''))}: {(s.get('content') or '')[:200]}"
-                    for s in result.sources[:10]
-                )
-                corrected = await _persist.correct_location(
-                    guessed_scope, guessed_file, sources_summary, llm_cfg
-                )
-                if corrected is not None:
-                    corr_scope, corr_file = corrected
+            # Always close the bus, even on failure (see _run_tui_turn): an
+            # unclosed bus on a raised error makes render_run() hang forever.
+            try:
+                if session.path is None:
+                    guessed_scope, guessed_file = await _pick_or_exit(q, llm_cfg)
                     session.path = _persist.resolve_path(
-                        corr_scope, corr_file, base=base_dir, continuing=session.continuing
+                        guessed_scope, guessed_file, base=base_dir, continuing=session.continuing
                     )
+                result = await _loop.run(
+                    query=q,
+                    history=session_history,
+                    system=system,
+                    mode=mode,
+                    llm_cfg=llm_cfg,
+                    embed_cfg=embed_cfg,
+                    bus=bus,
+                    runner_kwargs=runner_kwargs,
+                    document=session.body,
+                )
 
-            await _writer.write(
-                query=q,
-                history=session_history,
-                system=system,
-                sources=result.sources,
-                mode=mode,
-                llm_cfg=llm_cfg,
-                bus=bus,
-                existing_doc=session.body,
-            )
-            bus.close()
+                # Stage-2 correction: refine the location based on findings.
+                if session.continuing is None and guessed_scope is not None and result.sources:
+                    sources_summary = "\n".join(
+                        f"- {s.get('title', s.get('url', ''))}: {(s.get('content') or '')[:200]}"
+                        for s in result.sources[:10]
+                    )
+                    corrected = await _persist.correct_location(
+                        guessed_scope, guessed_file, sources_summary, llm_cfg
+                    )
+                    if corrected is not None:
+                        corr_scope, corr_file = corrected
+                        session.path = _persist.resolve_path(
+                            corr_scope, corr_file, base=base_dir, continuing=session.continuing
+                        )
+
+                await _writer.write(
+                    query=q,
+                    history=session_history,
+                    system=system,
+                    sources=result.sources,
+                    mode=mode,
+                    llm_cfg=llm_cfg,
+                    bus=bus,
+                    existing_doc=session.body,
+                )
+            finally:
+                bus.close()
 
         prod = _asyncio.create_task(producer())
         updated_doc = await _tui.render_run(bus)
-        await prod
+        await _await_producer(prod)
         session_history.append(("human", q))
         session_history.append(("assistant", updated_doc))
         return updated_doc
@@ -483,6 +487,26 @@ def main(
 
     _tui.followup_loop(run_turn, session, on_new=_on_new)
     raise typer.Exit(code=0)
+
+
+async def _await_producer(prod) -> None:
+    """Await the TUI producer task, mapping fatal LLM errors to a clean exit.
+
+    The bus is always closed by the producer's ``finally`` before we get here,
+    so ``render_run`` has already returned; we only need to surface any error
+    the producer raised instead of letting it crash with a raw traceback.
+    """
+    from .llm_config import is_fatal_llm_error
+
+    try:
+        await prod
+    except typer.Exit:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        if is_fatal_llm_error(exc):
+            typer.echo(f"error: LLM request failed: {type(exc).__name__}: {exc}", err=True)
+            raise typer.Exit(code=1)
+        raise
 
 
 async def _pick_or_exit(query, llm_cfg):
@@ -712,54 +736,58 @@ async def _run_tui_turn(
 
     async def producer():
         nonlocal guessed_scope, guessed_file
-        if session.path is None:
-            guessed_scope, guessed_file = await _pick_or_exit(query, llm_cfg)
-            session.path = _persist.resolve_path(
-                guessed_scope, guessed_file, base=base_dir, continuing=session.continuing
-            )
-
-        result = await _loop.run(
-            query=query,
-            history=history,
-            system=system,
-            mode=mode,
-            llm_cfg=llm_cfg,
-            embed_cfg=embed_cfg,
-            bus=bus,
-            runner_kwargs=runner_kwargs,
-            document=session.body,
-        )
-
-        # Stage-2 correction: refine the location based on findings.
-        if session.continuing is None and guessed_scope is not None and result.sources:
-            sources_summary = "\n".join(
-                f"- {s.get('title', s.get('url', ''))}: {(s.get('content') or '')[:200]}"
-                for s in result.sources[:10]
-            )
-            corrected = await _persist.correct_location(
-                guessed_scope, guessed_file, sources_summary, llm_cfg
-            )
-            if corrected is not None:
-                corr_scope, corr_file = corrected
+        # Always close the bus, even on failure: render_run() blocks on the bus
+        # until it is closed, so an unclosed bus on a raised error hangs forever.
+        try:
+            if session.path is None:
+                guessed_scope, guessed_file = await _pick_or_exit(query, llm_cfg)
                 session.path = _persist.resolve_path(
-                    corr_scope, corr_file, base=base_dir, continuing=session.continuing
+                    guessed_scope, guessed_file, base=base_dir, continuing=session.continuing
                 )
 
-        await _writer.write(
-            query=query,
-            history=history,
-            system=system,
-            sources=result.sources,
-            mode=mode,
-            llm_cfg=llm_cfg,
-            bus=bus,
-            existing_doc=session.body,
-        )
-        bus.close()
+            result = await _loop.run(
+                query=query,
+                history=history,
+                system=system,
+                mode=mode,
+                llm_cfg=llm_cfg,
+                embed_cfg=embed_cfg,
+                bus=bus,
+                runner_kwargs=runner_kwargs,
+                document=session.body,
+            )
+
+            # Stage-2 correction: refine the location based on findings.
+            if session.continuing is None and guessed_scope is not None and result.sources:
+                sources_summary = "\n".join(
+                    f"- {s.get('title', s.get('url', ''))}: {(s.get('content') or '')[:200]}"
+                    for s in result.sources[:10]
+                )
+                corrected = await _persist.correct_location(
+                    guessed_scope, guessed_file, sources_summary, llm_cfg
+                )
+                if corrected is not None:
+                    corr_scope, corr_file = corrected
+                    session.path = _persist.resolve_path(
+                        corr_scope, corr_file, base=base_dir, continuing=session.continuing
+                    )
+
+            await _writer.write(
+                query=query,
+                history=history,
+                system=system,
+                sources=result.sources,
+                mode=mode,
+                llm_cfg=llm_cfg,
+                bus=bus,
+                existing_doc=session.body,
+            )
+        finally:
+            bus.close()
 
     prod = _asyncio.create_task(producer())
     full_doc = await _tui.render_run(bus)
-    await prod
+    await _await_producer(prod)
 
     if full_doc:
         session.save(full_doc)

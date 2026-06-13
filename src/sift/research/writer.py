@@ -151,8 +151,12 @@ async def write(
                 {"stage": "writer", "error": "synthesis truncated by token limit"},
             ))
     except Exception as exc:  # noqa: BLE001
+        from ..llm_config import is_fatal_llm_error
+
         log.exception("writer streaming failed; falling back to non-stream")
         bus.emit(Event(EventType.ERROR, {"stage": "writer_stream", "error": str(exc)}))
+        if is_fatal_llm_error(exc):
+            raise
         try:
             resp = await client.chat.completions.create(model=llm_cfg.model, messages=convo)
             accumulated = resp.choices[0].message.content or ""
@@ -160,6 +164,8 @@ async def write(
         except Exception as exc2:  # noqa: BLE001
             log.exception("writer non-stream also failed")
             bus.emit(Event(EventType.ERROR, {"stage": "writer", "error": str(exc2)}))
+            if is_fatal_llm_error(exc2):
+                raise
 
     bus.emit(Event(EventType.SOURCES, {"sources": sources}))
     return accumulated

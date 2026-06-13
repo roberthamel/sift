@@ -167,8 +167,14 @@ async def run(
                 client, model=llm_cfg.model, messages=call_messages, tools=tools
             )
         except Exception as exc:  # noqa: BLE001
+            from ..llm_config import is_fatal_llm_error
+
             log.exception("loop iteration %d failed", i)
             bus.emit(Event(EventType.ERROR, {"stage": "loop", "iter": i, "error": str(exc)}))
+            if is_fatal_llm_error(exc):
+                # Misconfiguration (bad model/host/auth) can't be retried into
+                # success — fail loudly rather than returning an empty result.
+                raise
             break
 
         for k in result.usage:
